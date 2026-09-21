@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen
+  labels: { app.kubernetes.io/name: loadgen, app.kubernetes.io/part-of: demo }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: loadgen }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: loadgen, app.kubernetes.io/part-of: demo }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532 }
+      containers:
+        - name: loadgen
+          image: demo-svc
+          args: ["--role=loadgen"]
+          env:
+            - { name: TARGET_URL, value: "http://orders:8080" }
+            - { name: RPS, value: "20" }
+            - { name: READ_RATIO, value: "0.8" }
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: metrics, containerPort: 9090 }
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 20m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loadgen
+  labels: { app.kubernetes.io/name: loadgen, incident-copilot.dev/scrape: "true" }
+spec:
+  selector: { app.kubernetes.io/name: loadgen }
+  ports:
+    - { name: metrics, port: 9090, targetPort: metrics }

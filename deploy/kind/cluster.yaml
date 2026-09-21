@@ -1,0 +1,10 @@
+# kind cluster for the incident-copilot demo environment.
+# The node image is set by the Makefile from deploy/versions.env (KIND_NODE_IMAGE).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: incident-copilot
+nodes:
+  - role: control-plane
+  - role: worker
+    labels:
+      incident-copilot.dev/pool: workloads

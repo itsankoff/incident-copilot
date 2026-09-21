@@ -1,0 +1,11 @@
+# Baseline demo workload. `make deploy` applies this through a generated
+# overlay (build/deploy) that sets the image tag.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: demo
+resources:
+  - namespace.yaml
+  - inventory.yaml
+  - orders.yaml
+  - loadgen.yaml
+  - servicemonitor.yaml
