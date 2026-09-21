@@ -5,7 +5,7 @@
 fullnameOverride: kps
 
 grafana:
-  enabled: false # enable with `make observability GRAFANA=1`
+  enabled: false # the Makefile turns it on; `make observability GRAFANA=0` leaves it off
   # Local only: Grafana is reachable solely through `make port-forward`, so
   # anonymous admin access avoids a login step without exposing anything.
   grafana.ini:
@@ -20,9 +20,11 @@ grafana:
       type: loki
       access: proxy
       url: http://loki.logging.svc.cluster.local:3100
+  # Grafana 13 peaks around 250Mi while starting (migrations, plugin load);
+  # a 256Mi limit OOMKilled it in a loop.
   resources:
-    requests: { cpu: 20m, memory: 128Mi }
-    limits: { memory: 256Mi }
+    requests: { cpu: 20m, memory: 256Mi }
+    limits: { memory: 512Mi }
 
 # Control-plane components are not reachable for scraping in kind; their
 # jobs and rules would only produce noise alerts.
