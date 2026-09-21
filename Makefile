@@ -16,8 +16,8 @@ DIRTY   := $(shell git diff --quiet HEAD -- 2>/dev/null || echo -dirty)
 VERSION ?= $(COMMIT)$(DIRTY)
 IMAGE   := demo-svc:$(VERSION)
 
-# Setting up grafana during make observability
-GRAFANA ?= 0
+# Setting up grafana during make observability (0 disables it)
+GRAFANA ?= 1
 OBS_DIR := deploy/observability
 
 ##@ Development

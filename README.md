@@ -145,7 +145,7 @@ make tools        # check that the prerequisites are installed
 make cluster      # create the kind cluster and install Prometheus, Alertmanager, Loki, Alloy
 make deploy       # build the demo-svc image and deploy orders, inventory, and loadgen
 make port-forward # Prometheus :9090, Alertmanager :9093, Loki API :3100, Grafana :3000
-                  # (Grafana is opt-in: make observability GRAFANA=1. Loki has no UI of its own.)
+                  # (Grafana is on by default: make cluster GRAFANA=0 or make observability GRAFANA=0 to disable it. Loki has no UI of its own.)
 make down         # tear everything down
 ```
 
