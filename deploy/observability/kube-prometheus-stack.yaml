@@ -1,0 +1,66 @@
+# kube-prometheus-stack values for the demo environment (namespace: monitoring).
+# Tuned for fast alerting on a laptop, not for production.
+
+# Short, stable resource names: kps-prometheus, kps-alertmanager, ...
+fullnameOverride: kps
+
+grafana:
+  enabled: false # enable with `make cluster GRAFANA=1`
+
+# Control-plane components are not reachable for scraping in kind; their
+# jobs and rules would only produce noise alerts.
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+defaultRules:
+  create: true
+  rules:
+    etcd: false
+    kubeControllerManager: false
+    kubeSchedulerAlerting: false
+    kubeSchedulerRecording: false
+    kubeProxy: false
+    windows: false
+    # Workload alerts come from deploy/observability/alerts.yaml so the demo
+    # controls exactly which symptoms fire.
+    kubernetesApps: false
+  disabled:
+    # Docker Desktop's VM does not expose NTP sync state to node-exporter,
+    # so this fires permanently in kind.
+    NodeClockNotSynchronising: true
+
+prometheus:
+  prometheusSpec:
+    scrapeInterval: 15s
+    evaluationInterval: 15s
+    retention: 2d
+    # Pick up ServiceMonitors, PodMonitors, and PrometheusRules from every
+    # namespace, not only those labelled with the Helm release.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    resources:
+      requests: { cpu: 100m, memory: 400Mi }
+      limits: { memory: 1Gi }
+
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests: { cpu: 10m, memory: 32Mi }
+      limits: { memory: 128Mi }
+  config:
+    route:
+      group_by: [alertname, namespace, service]
+      group_wait: 10s
+      group_interval: 30s
+      repeat_interval: 1h
+      receiver: "null"
+      # The incident-copilot webhook receiver is added in M1.5.
+    receivers:
+      - name: "null"

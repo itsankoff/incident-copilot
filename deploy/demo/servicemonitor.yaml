@@ -1,0 +1,13 @@
+# Scrapes every demo Service labelled incident-copilot.dev/scrape=true.
+# honorLabels keeps the service label that demo-svc sets on its own metrics.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: demo
+spec:
+  selector:
+    matchLabels: { incident-copilot.dev/scrape: "true" }
+  endpoints:
+    - port: metrics
+      interval: 15s
+      honorLabels: true
