@@ -27,7 +27,7 @@ make tools                            # check prerequisites
 make cluster                          # kind cluster + Prometheus, Alertmanager, Loki, Alloy (idempotent)
 make deploy                           # build demo-svc image, load into kind, apply deploy/demo
 make status                           # pods in demo, monitoring, logging
-make port-forward                     # Prometheus :9090, Alertmanager :9093, Loki :3100
+make port-forward                     # Prometheus :9090, Alertmanager :9093, Loki API :3100, Grafana :3000 (if GRAFANA=1 during make observability)
 make down                             # delete the cluster
 ```
 

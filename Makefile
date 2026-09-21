@@ -16,6 +16,7 @@ DIRTY   := $(shell git diff --quiet HEAD -- 2>/dev/null || echo -dirty)
 VERSION ?= $(COMMIT)$(DIRTY)
 IMAGE   := demo-svc:$(VERSION)
 
+# Setting up grafana during make observability
 GRAFANA ?= 0
 OBS_DIR := deploy/observability
 
@@ -108,11 +109,17 @@ status: ## Show pods in the demo, monitoring, and logging namespaces
 	$(KUBECTL) get pods -n logging
 
 .PHONY: port-forward
-port-forward: ## Forward Prometheus :9090, Alertmanager :9093, Loki :3100 (Ctrl-C to stop)
+port-forward: ## Forward Prometheus :9090, Alertmanager :9093, Loki API :3100, Grafana :3000 if enabled (Ctrl-C to stop)
 	@trap 'kill 0' INT TERM EXIT; \
 	$(KUBECTL) -n monitoring port-forward svc/kps-prometheus 9090:9090 & \
 	$(KUBECTL) -n monitoring port-forward svc/kps-alertmanager 9093:9093 & \
 	$(KUBECTL) -n logging port-forward svc/loki 3100:3100 & \
+	if $(KUBECTL) -n monitoring get svc kps-grafana >/dev/null 2>&1; then \
+	  $(KUBECTL) -n monitoring port-forward svc/kps-grafana 3000:80 & \
+	  echo "Grafana: http://localhost:3000/explore (Loki and Prometheus datasources)"; \
+	else \
+	  echo "Grafana is off. Enable it with: make observability GRAFANA=1"; \
+	fi; \
 	wait
 
 .PHONY: down

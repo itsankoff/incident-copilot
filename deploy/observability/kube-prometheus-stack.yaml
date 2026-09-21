@@ -5,7 +5,24 @@
 fullnameOverride: kps
 
 grafana:
-  enabled: false # enable with `make cluster GRAFANA=1`
+  enabled: false # enable with `make observability GRAFANA=1`
+  # Local only: Grafana is reachable solely through `make port-forward`, so
+  # anonymous admin access avoids a login step without exposing anything.
+  grafana.ini:
+    auth.anonymous:
+      enabled: true
+      org_role: Admin
+    auth:
+      disable_login_form: true
+  additionalDataSources:
+    - name: Loki
+      uid: loki
+      type: loki
+      access: proxy
+      url: http://loki.logging.svc.cluster.local:3100
+  resources:
+    requests: { cpu: 20m, memory: 128Mi }
+    limits: { memory: 256Mi }
 
 # Control-plane components are not reachable for scraping in kind; their
 # jobs and rules would only produce noise alerts.
