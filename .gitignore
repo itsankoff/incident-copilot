@@ -33,3 +33,6 @@ go.work.sum
 
 # Generated deploy overlays
 build/
+
+# macos
+.DS_Store
