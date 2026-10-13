@@ -17,7 +17,7 @@ make down                             # delete the cluster
 
 ## Architecture
 
-Architecture diagrams and decision records live in docs/arch/arch-diagram.md and adr-XXXX.md
+Architecture diagrams and decision records live in docs/adr/arch-diagram.md and docs/adr/adr-XXXX.md
 
 Every kubectl and helm call in the Makefile pins `--context kind-incident-copilot`. Keep it that way.
 
