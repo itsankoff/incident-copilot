@@ -1,6 +1,6 @@
 # ADR 0001: Autonomy and trust model
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-13
 - **Deciders:** @itsankoff
 - **Roadmap:** M4.1. Must be accepted before M4.2 (runbook registry and executor) starts.
@@ -133,7 +133,7 @@ sequenceDiagram
     participant AM as Alertmanager
     participant AG as Agent
     participant EX as Executor
-    participant TK as Ticket / Slack
+    participant TK as Approval channel
     participant H as Approver
     participant K as Kubernetes API
     AM->>AG: alert webhook
@@ -153,10 +153,15 @@ sequenceDiagram
 - **The approval request shows what will happen**, not what the model meant: the runbook, the target, the parameters, the **server-side dry-run** diff (`dryRun=All`), the RCA summary and confidence, and the caps that put the action at L2.
 - **The approval is bound to a digest** of the runbook, target, parameters, the target's `metadata.generation`, and the dry-run result. A different proposal, or a target whose spec changed since the request (someone already rolled back by hand, say), invalidates the approval. The executor then aborts and updates the ticket rather than act on a stale picture. `generation` is used rather than `resourceVersion` because it changes only when the spec changes, not on every status update.
 - **Silence is not consent.** An approval request expires after 15 minutes by default, and expiry counts as a denial.
-- **Only authorised approvers count.** The approver set comes from the policy (Slack user IDs or a user group, a ServiceNow assignment group, GitHub logins for the Issues fallback). The approver's identity is the one the channel asserts and the executor verifies: Slack requests are checked against the signing secret, and ServiceNow and GitHub state is read through their APIs with the executor's own credentials.
+- **One authorised approver is enough**, in every environment including `production`. A second approver may be required later, through a new ADR.
+- **Only authorised approvers count.** The approver set comes from the policy (Slack user IDs or a user group, a ServiceNow assignment group, GitHub logins for the Issues fallback, and the identities allowed to sign in on an approval link). The approver's identity is the one the channel asserts and the executor verifies:
+  - Slack requests are checked against the signing secret.
+  - ServiceNow and GitHub state is read through their APIs with the executor's own credentials.
+  - An **approval link** is single-use, expires with the request, and is bound to the `action_id` and digest. Opening it is not an approval: the approver must sign in on the page the link opens, and the executor records the authenticated identity. Holding the link proves nothing, because emails and notifications get forwarded.
 - **The executor owns the gate.** The agent cannot mark anything as approved.
 - **A denial is final** for that runbook and target within the incident. The agent cannot re-propose it until the incident is resolved.
-- **Channels sit behind the existing `Approver` interface:** a ServiceNow state change, a Slack button, or a `/approve <action_id>` comment on the GitHub issue.
+- **Channels sit behind the existing `Approver` interface:** a ServiceNow state change, a Slack button, a `/approve <action_id>` comment on the GitHub issue, or an approval link. **Email** and **push notifications** only deliver an approval link. They carry no approval of their own.
+- **Any configured channel is accepted for now.** Restricting which channels may approve, per environment or per runbook, is deferred to a later change.
 
 ### D6. Guardrails for L3
 
@@ -209,7 +214,7 @@ This list is the canonical one. Relaxing any invariant needs a new ADR that supe
 - **Coverage is narrow.** Most real incidents will end in "escalate". This is accepted: a correct RCA delivered fast is most of the value.
 - **L2 adds human latency.** Production restarts wait for a person. Mitigations: a clear approval request, a one-click Slack approval, and promotion to L3 once there is evidence.
 - **Scope binding is conservative.** An action on a dependency, such as restarting `inventory` when the alert is on `orders`, is never automated.
-- **More moving parts.** A second Deployment, an internal API, a NetworkPolicy, a policy ConfigMap, and new configuration (`ENVIRONMENT`, `SLACK_SIGNING_SECRET`), which go into the README table when M4.2 and M4.3 add them.
+- **More moving parts.** A second Deployment, an internal API, a NetworkPolicy, a policy ConfigMap, and new configuration (`ENVIRONMENT`, `SLACK_SIGNING_SECRET`, and settings for email, push delivery, and approval-link sign-in), which go into the README table when M4.2 and M4.3 add them.
 - **Confidence is a weak signal.** It is used only as a brake, so a model that is wrong and confident still reaches the configured ceiling. The real protection is the ceiling plus the eval-based promotion.
 
 **Residual risks (out of scope for v1)**
@@ -252,7 +257,7 @@ ADR-specific checks are marked ★. The rest are already in the roadmap.
 
 ## Follow-ups
 
-- Point the roadmap's "relaxing a safety invariant needs an ADR (see CLAUDE.md)" rule, and CLAUDE.md itself, at the **Safety invariants** section of this ADR. The invariants list currently lives in `misc/INSTRUCTIONS.md`, which CLAUDE.md no longer includes.
-- Add the unsafe action rate to the M5.1 report and to the M5.2 scoring.
-- Open question: should production rollbacks require two approvers?
-- Open question: should the Slack approval channel use Socket Mode, so the kind setup needs no public endpoint?
+- The **Safety invariants** section above is the canonical list. The roadmap's rule on relaxing an invariant points here. CLAUDE.md is intentionally left as is. Component boundaries and the RCA contract are in [`arch-diagram.md`](arch-diagram.md), and engineering conventions are in [`CONTRIBUTING.md`](../../CONTRIBUTING.md).
+- The unsafe action rate is part of the M5.1 report and the M5.2 scoring in the roadmap, and so are the ★ checks above.
+- Restricting the allowed approval channels per environment or runbook is deferred (D5).
+- Whether the Slack channel uses Socket Mode, so the kind setup needs no public endpoint, is an M4.3 implementation choice, not an ADR decision.
