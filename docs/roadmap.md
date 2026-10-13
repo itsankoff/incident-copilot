@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-09-21
+Last updated: 2026-10-13
 
 This roadmap breaks the plan in the [README](../README.md#roadmap) into tasks. Each task has a **goal**, **requirements**, and **validation** criteria that decide when it is done. A task is done only when every validation item passes, and the evidence (a command and its output, or a test name) goes in the PR description.
 
@@ -11,13 +11,22 @@ Rules that apply to every task:
 - `go build ./...`, `go vet ./...`, and `go test ./...` pass, and unit tests make no network calls.
 - A new environment variable updates the README configuration table in the same PR.
 - A new dependency is justified in the PR description.
-- Changes that relax a safety invariant need an ADR (see CLAUDE.md).
+- Changes that relax a safety invariant need a new ADR that supersedes [ADR 0001](adr/0001-autonomy-and-trust-model.md#safety-invariants), which holds the canonical list.
 
 ---
 
 ## Progress
 
 Scaffold landed 2026-09-21. **M1.1** is done. **M1.2** is done apart from its alert rules, which come in M1.5. **M0.1**, **M1.3**, and **M1.4** are partly done, and each has a *Remaining* line below.
+
+2026-10-13: **M1.3** and **M1.4** are done. **M4.1** is done: [ADR 0001](adr/0001-autonomy-and-trust-model.md) is *Accepted*, and its decisions are folded into M4.2 to M4.4 and M5.1 to M5.2 below. **M0.1** has lint now, and only the `doc.go` stubs remain. **M0.2** is implemented, and its validation needs a pushed PR. Not started: M1.5 to M1.12, and everything from M2 on.
+
+**Next up**, in order:
+
+1. Push, and run the M0.2 validation (a deliberate `go vet` failure goes red, and a clean PR goes green in under 5 minutes).
+2. M1.5 (alert rules and webhook sink) and M1.6 (`faultctl`, admin API handlers, scenario spec) in parallel.
+3. M1.8 bad-config first among the faults, because M2 is built against it, then M1.7, M1.9, and M1.10.
+4. The M2 design doc (agent loop, MCP server, RCA schema), in parallel with M1.6 to M1.10.
 
 ## M0: Foundations
 
@@ -32,7 +41,7 @@ Scaffold landed 2026-09-21. **M1.1** is done. **M1.2** is done apart from its al
 - **Validation:**
   - `make build test vet lint` passes on a clean checkout.
   - `make help` lists every target with a one-line description.
-- **Remaining:** golangci-lint config and a `lint` target, plus `doc.go` stubs for packages that don't exist yet.
+- **Remaining:** `doc.go` stubs for packages that don't exist yet. The golangci-lint config (`.golangci.yml`, version pinned in `versions.env`) and `make lint` are in.
 
 ### M0.2 CI
 
@@ -69,7 +78,7 @@ Design: [`docs/design/demo-environment.md`](design/demo-environment.md). Exit cr
 - **Requirements:**
   - Helm installs from values files under `deploy/observability/`, with chart versions from `versions.env`.
   - A 15 s scrape interval and 15 s rule evaluation. Alertmanager `group_wait` of 10s and `send_resolved: true`.
-  - Scrape jobs for etcd, the scheduler, and the controller manager are disabled. Grafana is off unless `GRAFANA=1`.
+  - Scrape jobs for etcd, the scheduler, and the controller manager are disabled. Grafana is on by default, and `GRAFANA=0` turns it off.
   - Alloy ships all pod logs from `demo` and `incident-copilot` to Loki with the labels `namespace`, `app`, `pod`, and `container`.
   - `make cluster` blocks until every component is Ready.
   - `make port-forward` exposes Prometheus, Alertmanager, and Loki on localhost for development.
@@ -92,7 +101,7 @@ Design: [`docs/design/demo-environment.md`](design/demo-environment.md). Exit cr
   - Unit tests cover each handler, config validation (including the `ORDER_TTL=15x` failure), and the metric labels.
   - Run locally (`go run` for all three roles), `curl :9090/metrics` shows each metric in the contract.
   - Every log line parses as JSON and contains `service`, `version`, and `commit`.
-- **Remaining:** the admin API on :9091 (stubbed out for now).
+- **Done:** the admin API listens on :9091 (`ADMIN_ADDR`) in every role, with no handlers and no request logging (`TestRunAdminAPI`).
 
 ### M1.4 Images and manifests
 
@@ -107,7 +116,7 @@ Design: [`docs/design/demo-environment.md`](design/demo-environment.md). Exit cr
   - `sum(rate(http_requests_total{service="orders"}[1m]))` sits at 20 ± 2 rps.
   - The 5xx rate is 0 and p95 latency is under 100 ms for 10 minutes. No alerts fire.
   - Loki returns `orders` request logs within 30 s of them being written.
-- **Remaining:** provenance annotations (`change-cause`, version, commit) on the Deployments. The first baseline check passed: 19.9 rps, no 5xx, p95 of 24 ms, all 4 targets up, only `Watchdog` firing, and 2.8 GB of memory in use.
+- **Done:** `make deploy` sets `kubernetes.io/change-cause`, `app.kubernetes.io/version`, and `incident-copilot.dev/commit` on each Deployment's metadata through the generated overlay. A plain `kubectl apply -k deploy/demo` sets none of them. The first baseline check passed: 19.9 rps, no 5xx, p95 of 24 ms, all 4 targets up, only `Watchdog` firing, and 2.8 GB of memory in use.
 
 ### M1.5 Alert rules and webhook sink
 
@@ -207,10 +216,10 @@ A design doc covering the agent loop, the MCP server, and the RCA schema comes b
 
 | Task | Goal | Requirements | Validation |
 |---|---|---|---|
-| **M4.1** ADR 0001: autonomy and trust model | Record the safety design before building it | `docs/adr/0001-autonomy-and-trust-model.md` (the README already links to it). | Reviewed and merged before M4.2 starts. |
-| **M4.2** Runbook registry and executor | The only code that changes state | `rollback_deployment`, `restart_pod`, and `scale_up`, each with a typed parameter schema, a maximum level, and a per-environment ceiling. The executor checks the level in code. The audit write happens before execution, and a failed audit write blocks the action. | Unit tests: the LLM asking for a higher level is refused, an unknown runbook is refused, and a failing audit writer blocks execution. The k8s write permissions exist only in the executor's ServiceAccount (RBAC test). |
-| **M4.3** Approval gate | Humans approve L2 actions | An `Approver` interface with ticket-state and Slack-button implementations. Approvals time out, and every approval is audited with who approved it. | Unit tests for approve, deny, and timeout. On kind, an L2 rollback runs only after approval. |
-| **M4.4** End-to-end remediation | The loop closes | Each fault, at its configured level, runs through to execution or escalation. | memory-leak restarts at L3 in staging mode, bad-config waits for approval at L2, and dependency-timeout proposes no action. After each run, the audit log can reconstruct the whole incident. |
+| **M4.1** ADR 0001: autonomy and trust model | Record the safety design before building it | `docs/adr/0001-autonomy-and-trust-model.md` (the README already links to it). | Reviewed, status set to *Accepted*, and merged before M4.2 starts. The README and CONTRIBUTING.md point at its **Safety invariants** section. |
+| **M4.2** Runbook registry and executor | The only code that changes state | `rollback_deployment`, `restart_pod`, and `scale_up`, each with a typed parameter schema, a maximum level, and a per-environment ceiling. The executor checks the level in code. The audit write happens before execution, and a failed audit write blocks the action. Per ADR 0001: a pure `policy.Decide` (D3), scope binding to the alerting workload, cooldowns and the one-L3-per-incident limit (D6), and a separate `--role=executor` Deployment and ServiceAccount (D4). | Unit tests: the LLM asking for a higher level is refused, an unknown runbook is refused, and a failing audit writer blocks execution. A table test of `Decide` shows the result is never above any input. A target outside the alert is capped at L1. A second L3 action, or one inside a cooldown, is capped at L2. The agent's ServiceAccount cannot `patch`, `create`, or `delete` (RBAC test). |
+| **M4.3** Approval gate | Humans approve L2 actions | An `Approver` interface with ticket-state, Slack-button, and authenticated approval-link implementations. Email and push notifications deliver the link. One approver is enough, including for production rollbacks. Restricting the allowed channels per environment comes later. Approvals time out, and every approval is audited with who approved it. Approvals are bound to the action digest (ADR 0001 D5). | Unit tests for approve, deny, and timeout. An approval for digest A does not execute digest B, and a target whose `generation` changed after approval aborts. On kind, an L2 rollback runs only after approval. |
+| **M4.4** End-to-end remediation | The loop closes | Each fault, at its configured level, runs through to execution or escalation. | memory-leak restarts at L3 in staging mode, bad-config waits for approval at L2, and dependency-timeout proposes no action. After each run, the audit log can reconstruct the whole incident. Setting the kill switch to L1 stops autonomous execution on the next decision, with no restart. |
 
 ---
 
@@ -218,8 +227,8 @@ A design doc covering the agent loop, the MCP server, and the RCA schema comes b
 
 | Task | Goal | Requirements | Validation |
 |---|---|---|---|
-| **M5.1** Harness runner | Unattended scoring across all scenarios | `make eval [N=runs] [S=scenario]` runs inject, wait, agent, score, and clear for each scenario. The report covers diagnosis accuracy, runbook accuracy, time to diagnosis, and tokens per incident, per scenario and overall, as JSON and Markdown. | A run of 4 scenarios × 3 repetitions finishes unattended, and the report matches the audit logs. |
-| **M5.2** Diagnosis scoring | A trustworthy accuracy number | Scoring against `cause` and `cause_facts`: a deterministic check first, with an optional LLM judge whose prompt is versioned. Every result is stored with the prompt and model versions. | 20 hand-labelled RCAs agree with the scorer in at least 90% of cases. |
+| **M5.1** Harness runner | Unattended scoring across all scenarios | `make eval [N=runs] [S=scenario]` runs inject, wait, agent, score, and clear for each scenario. The report covers diagnosis accuracy, runbook accuracy, unsafe action rate (ADR 0001 D8), time to diagnosis, and tokens per incident, per scenario and overall, as JSON and Markdown. | A run of 4 scenarios × 3 repetitions finishes unattended, and the report matches the audit logs. |
+| **M5.2** Diagnosis scoring | A trustworthy accuracy number | Scoring against `cause` and `cause_facts`, plus whether an L2 or L3 action contradicts the ground-truth runbook: a deterministic check first, with an optional LLM judge whose prompt is versioned. Every result is stored with the prompt and model versions. | 20 hand-labelled RCAs agree with the scorer in at least 90% of cases. |
 | **M5.3** Baseline and regression gate | Changes are measured | Commit the baseline report. A script shows the difference between two reports. | A deliberately degraded prompt shows up as a regression in the difference. |
 | **M5.4** (stretch) Decoy scenario | Test correlation against causation | A harmless deploy of `inventory` 1 minute before a memory-leak. | A scenario file with ground truth that says rollback is wrong. The accuracy on it is reported. |
 

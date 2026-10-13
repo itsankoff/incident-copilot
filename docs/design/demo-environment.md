@@ -50,7 +50,7 @@ flowchart LR
 | Namespace | Contents |
 |---|---|
 | `demo` | `orders`, `inventory`, `loadgen` |
-| `monitoring` | kube-prometheus-stack: Prometheus, Alertmanager, kube-state-metrics, node-exporter, Prometheus Operator. Grafana is off by default and enabled with `GRAFANA=1`. |
+| `monitoring` | kube-prometheus-stack: Prometheus, Alertmanager, kube-state-metrics, node-exporter, Prometheus Operator. Grafana is on by default and disabled with `GRAFANA=0`. |
 | `logging` | Loki (single binary, filesystem storage) and Grafana Alloy (one replica that tails pod logs through the Kubernetes API, so it needs no hostPath mounts and ships each line once) |
 | `incident-copilot` | The agent. Until the agent exists, a webhook sink that records Alertmanager payloads. |
 
