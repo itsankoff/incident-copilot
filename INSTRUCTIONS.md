@@ -1,10 +1,4 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Project
-
-**incident-copilot** is an autonomous incident responder for Kubernetes platforms. It receives an Alertmanager webhook, investigates with real tools (metrics, logs, k8s events, deploy history, commit diffs), writes a structured RCA into a ticketing system, and proposes a remediation from an allowlist that runs only as far as its autonomy level permits. `README.md` is the product-level source of truth for scope and design. Keep it and this file in sync.
+# INSTRUCTIONS
 
 ## Status
 
@@ -17,41 +11,6 @@ Early development. Module `github.com/itsankoff/incident-copilot` (Go 1.25). Wha
 - `cmd/demo-svc`, `internal/demo`: stub demo service (roles, probes, metrics, JSON logs, no fault injection yet)
 
 The agent, MCP server, and everything else in the architecture below is the target, not code yet. Check what actually exists before assuming a package, command, or file is present. The demo environment design is in `docs/design/demo-environment.md` and the task plan (goal, requirements, and validation for each task) is in `docs/roadmap.md`. Work through the roadmap in order, and treat a task's validation list as its definition of done.
-
-## Commands
-
-```sh
-make build test vet                   # go build / go test / go vet ./...
-go test ./internal/demo -run TestName # single test
-make tools                            # check prerequisites
-make cluster                          # kind cluster + Prometheus, Alertmanager, Loki, Alloy (idempotent)
-make deploy                           # build demo-svc image, load into kind, apply deploy/demo
-make status                           # pods in demo, monitoring, logging
-make port-forward                     # Prometheus :9090, Alertmanager :9093, Loki API :3100, Grafana :3000 (can be toggled off with GRAFANA=0 during make cluster or make observability)
-make down                             # delete the cluster
-```
-
-Every kubectl and helm call in the Makefile pins `--context kind-incident-copilot`. Keep it that way.
-
-Planned, not implemented: `make fault F=<scenario>`, `make clear`, `make smoke`, `make eval`.
-
-## Architecture
-
-```
-Alertmanager --webhook--> Agent loop <--tool calls--> MCP tool server --> Prometheus / Loki / k8s API / GitHub API
-                             |  ^
-                             v  |
-                         LLM provider (Azure OpenAI default)
-                             |
-                             v
-                   Ticketing adapter (ServiceNow | GitHub Issues) --approval--> Approval gate <-- Slack button
-                                                                                     |
-                                                                                     v
-                                                                            Runbook executor --> k8s API
-   All components ---> append-only audit log
-```
-
-Flow: **Trigger → Investigate → Report → Remediate → Record.**
 
 ### Components and their boundaries
 
