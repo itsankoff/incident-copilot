@@ -19,14 +19,13 @@ Rules that apply to every task:
 
 Scaffold landed 2026-09-21. **M1.1** is done. **M1.2** is done apart from its alert rules, which come in M1.5. **M0.1**, **M1.3**, and **M1.4** are partly done, and each has a *Remaining* line below.
 
-2026-10-13: **M1.3** and **M1.4** are done. **M4.1** is done: [ADR 0001](adr/0001-autonomy-and-trust-model.md) is *Accepted*, and its decisions are folded into M4.2 to M4.4 and M5.1 to M5.2 below. **M0.1** has lint now, and only the `doc.go` stubs remain. **M0.2** is implemented, and its validation needs a pushed PR. Not started: M1.5 to M1.12, and everything from M2 on.
+2026-10-13: **M1.3** and **M1.4** are done. **M4.1** is done: [ADR 0001](adr/0001-autonomy-and-trust-model.md) is *Accepted*, and its decisions are folded into M4.2 to M4.4 and M5.1 to M5.2 below. **M0.1** has lint now, and only the `doc.go` stubs remain. **M0.2** is done. Not started: M1.5 to M1.12, and everything from M2 on.
 
 **Next up**, in order:
 
-1. Push, and run the M0.2 validation (a deliberate `go vet` failure goes red, and a clean PR goes green in under 5 minutes).
-2. M1.5 (alert rules and webhook sink) and M1.6 (`faultctl`, admin API handlers, scenario spec) in parallel.
-3. M1.8 bad-config first among the faults, because M2 is built against it, then M1.7, M1.9, and M1.10.
-4. The M2 design doc (agent loop, MCP server, RCA schema), in parallel with M1.6 to M1.10.
+1. M1.5 (alert rules and webhook sink) and M1.6 (`faultctl`, admin API handlers, scenario spec) in parallel.
+2. M1.8 bad-config first among the faults, because M2 is built against it, then M1.7, M1.9, and M1.10.
+3. The M2 design doc (agent loop, MCP server, RCA schema), in parallel with M1.6 to M1.10.
 
 ## M0: Foundations
 
@@ -50,6 +49,7 @@ Scaffold landed 2026-09-21. **M1.1** is done. **M1.2** is done apart from its al
 - **Validation:**
   - A PR containing a deliberate `go vet` failure is marked red.
   - A clean PR is marked green in under 5 minutes.
+- **Done:** validated on push events, because the token used for automation can't open PRs; the `pull_request` trigger runs the same job. A branch with a deliberate `go vet` failure went red, failing in `make build test vet lint` with the vet annotation on the bad line (run 38420712034). The clean `v1` run went green in 1 min 56 s (run 38420659230).
 
 ---
 
