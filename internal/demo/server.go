@@ -55,6 +55,8 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger, build BuildInfo) 
 
 	serve(ctx, g, &http.Server{Addr: cfg.ListenAddr, Handler: api, ReadHeaderTimeout: 5 * time.Second})
 	serve(ctx, g, &http.Server{Addr: cfg.MetricsAddr, Handler: metricsMux, ReadHeaderTimeout: 5 * time.Second})
+	// The admin API has no handlers until M1.6. Its requests are never logged.
+	serve(ctx, g, &http.Server{Addr: cfg.AdminAddr, Handler: http.NewServeMux(), ReadHeaderTimeout: 5 * time.Second})
 
 	ready.Store(true)
 	logger.Info("started", "listen_addr", cfg.ListenAddr, "metrics_addr", cfg.MetricsAddr)
