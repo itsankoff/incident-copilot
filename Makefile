@@ -103,6 +103,13 @@ deploy: image ## Deploy the demo workload (orders, inventory, loadgen) and wait 
 	  'kind: Kustomization' \
 	  'resources: [../../deploy/demo]' \
 	  'images: [{name: demo-svc, newName: demo-svc, newTag: "$(VERSION)"}]' \
+	  'patches:' \
+	  '  - target: {kind: Deployment}' \
+	  '    patch: |-' \
+	  '      {apiVersion: apps/v1, kind: Deployment, metadata: {name: any, annotations: {' \
+	  '        kubernetes.io/change-cause: "deploy demo-svc $(VERSION)",' \
+	  '        app.kubernetes.io/version: "$(VERSION)",' \
+	  '        incident-copilot.dev/commit: "$(COMMIT)"}}}' \
 	  > build/deploy/kustomization.yaml
 	$(KUBECTL) apply -k build/deploy
 	@for d in inventory orders loadgen; do \
