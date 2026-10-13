@@ -68,7 +68,7 @@ func (l *loadgen) fire(ctx context.Context) {
 		l.metrics.ObserveDependency("orders", "error", elapsed)
 	default:
 		_, _ = io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		outcome := "ok"
 		if resp.StatusCode >= 500 {
 			outcome = "error"

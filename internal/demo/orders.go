@@ -37,7 +37,7 @@ func (c *HTTPInventory) Stock(ctx context.Context, sku string) (StockLevel, erro
 	if err != nil {
 		return StockLevel{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return StockLevel{}, fmt.Errorf("inventory returned %d", resp.StatusCode)
 	}
