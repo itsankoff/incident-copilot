@@ -21,6 +21,7 @@ type Config struct {
 	Role        Role
 	ListenAddr  string // API, /healthz, /readyz
 	MetricsAddr string // /metrics
+	AdminAddr   string // admin API, never in a Service
 
 	// orders
 	InventoryURL     string
@@ -48,6 +49,7 @@ func LoadConfig(role string, getenv func(string) string) (Config, error) {
 		Role:        Role(role),
 		ListenAddr:  env("LISTEN_ADDR", ":8080"),
 		MetricsAddr: env("METRICS_ADDR", ":9090"),
+		AdminAddr:   env("ADMIN_ADDR", ":9091"),
 	}
 
 	var err error

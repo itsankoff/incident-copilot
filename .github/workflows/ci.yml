@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - uses: actions/setup-go@v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install golangci-lint
+        run: |
+          version=$(grep '^GOLANGCI_LINT_VERSION=' deploy/versions.env | cut -d= -f2)
+          go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${version}"
+
+      # Unit tests only. The e2e suite (build tag e2e) needs a kind cluster.
+      - run: make build test vet lint

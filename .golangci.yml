@@ -1,0 +1,22 @@
+# golangci-lint v2 config. Version pinned in deploy/versions.env.
+# A small, explicit set: correctness first, style only where it is mechanical.
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck    # unchecked errors (audit writes must never be dropped)
+    - govet       # the `go vet` analyzers
+    - staticcheck # bugs, simplifications, deprecated APIs
+    - ineffassign # assignments that are never used
+    - unused      # dead code
+    - misspell    # typos in comments and strings
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/itsankoff/incident-copilot

@@ -1,6 +1,6 @@
 # incident-copilot
 
-**An autonomous incident responder for Kubernetes platforms.** incident-copilot receives an alert, investigates it with real observability and delivery tools, writes a structured root-cause analysis into your ticketing system, and proposes a remediation that only runs once a human has approved it.
+**An autonomous incident responder for Kubernetes platforms.** incident-copilot receives an alert, investigates it with real observability and delivery tools, writes a structured root-cause analysis into your ticketing system, and proposes a remediation from an allowlist that runs only as far as its autonomy level permits.
 
 It is written in Go, calls LLM APIs directly with tool calling (no agent framework), exposes its tools over the [Model Context Protocol](https://modelcontextprotocol.io), and ships with an evaluation harness that measures how often the agent gets the diagnosis right.
 
@@ -32,13 +32,13 @@ flowchart LR
     MCP --> GH[(GitHub API)]
     AG <--> LLM[LLM provider<br/>Azure OpenAI / others]
     AG -- RCA --> TKT[Ticketing<br/>ServiceNow / GitHub Issues]
-    TKT -- approval --> GATE{Approval gate}
-    SLACK[Slack button] -- approval --> GATE
-    GATE --> RB[Runbook executor]
-    RB --> K8S
+    AG -- proposal --> EX[Executor<br/>no LLM]
+    EX --> GATE{Approval gate}
+    TKT -- approval --> GATE
+    CH[Slack / approval link<br/>via email or push] -- approval --> GATE
+    GATE --> K8S
     AG -.-> AUDIT[(Append-only audit log)]
-    GATE -.-> AUDIT
-    RB -.-> AUDIT
+    EX -.-> AUDIT
 ```
 
 1. **Trigger.** Alertmanager sends a webhook to the agent when an alert fires.
@@ -46,6 +46,8 @@ flowchart LR
 3. **Report.** It opens an incident with a structured RCA.
 4. **Remediate.** It proposes one runbook from the allowlist. Depending on the runbook's autonomy level, the runbook is only suggested, waits for approval, or runs on its own.
 5. **Record.** Every step is written to the audit log.
+
+Component boundaries are described in [`docs/adr/arch-diagram.md`](docs/adr/arch-diagram.md).
 
 ### Investigation tools
 
@@ -76,28 +78,22 @@ Ticketing is behind an adapter interface. **ServiceNow** is the primary adapter 
 
 ## Trust model
 
-Remediation is where an AI agent can do real damage, so it is the most constrained part of the system.
+Remediation is where an AI agent can do real damage, so it is the most constrained part of the system. **The model proposes, and deterministic code decides.**
 
-**Allowlisted runbooks.** The agent cannot run arbitrary commands. It can only choose from a fixed set of runbooks, for example:
+- **Allowlisted runbooks.** The agent cannot run arbitrary commands. It chooses from a fixed set of typed runbooks: `rollback_deployment`, `restart_pod`, and `scale_up`.
+- **Autonomy levels.** Each runbook has a maximum level, and each environment a ceiling, for example L3 in staging and L2 in production. Nothing the model says can raise them.
 
-- `rollback_deployment`
-- `restart_pod`
-- `scale_up`
+  | Level | Name | Behaviour |
+  |---|---|---|
+  | **L0** | Observe | Record the proposal in the audit log only. |
+  | **L1** | Suggest | Propose the runbook in the ticket. A human carries it out. |
+  | **L2** | Approve | Execute after one authorised human approves that exact action (ticket, Slack, or an approval link sent by email or push). |
+  | **L3** | Autonomous | Execute immediately and report straight away. |
 
-**Autonomy levels.** Each runbook is tagged with the most the agent may do with it:
+- **Read and write are separated.** The agent only reads. A separate executor, which never calls an LLM, is the only component allowed to change the cluster.
+- **Audit log.** Every alert, tool call, LLM request and response, proposal, approval, and execution result is appended to a hash-chained log before the action it describes. Any incident can be reconstructed from it.
 
-| Level | Name | Behaviour |
-|---|---|---|
-| **L0** | Observe | Investigate and report only. No action is proposed. |
-| **L1** | Suggest | Propose the runbook in the ticket. A human carries it out. |
-| **L2** | Approve | Execute after explicit approval, given by a ticket state change or a Slack button. |
-| **L3** | Autonomous | Execute immediately and report afterwards. |
-
-The levels are configured per runbook and can be tightened per environment, for example L3 in staging and L2 in production.
-
-**Audit log.** Every alert received, tool call with its arguments and result, LLM request and response, proposed action, approval, and execution result is appended to an append-only log. Any incident can be reconstructed from it after the fact.
-
-The reasoning behind this model is recorded in [`docs/adr/0001-autonomy-and-trust-model.md`](docs/adr/0001-autonomy-and-trust-model.md).
+The full design, the safety invariants, and the reasoning behind them are in [ADR 0001: Autonomy and trust model](docs/adr/0001-autonomy-and-trust-model.md).
 
 ## Evaluation harness
 
@@ -142,12 +138,16 @@ A local [kind](https://kind.sigs.k8s.io) cluster runs a small Go service alongsi
 
 ```sh
 make tools        # check that the prerequisites are installed
+make build test vet lint   # compile, unit-test, and lint the Go code
 make cluster      # create the kind cluster and install Prometheus, Alertmanager, Loki, Alloy
 make deploy       # build the demo-svc image and deploy orders, inventory, and loadgen
 make port-forward # Prometheus :9090, Alertmanager :9093, Loki API :3100, Grafana :3000
                   # (Grafana is on by default: make cluster GRAFANA=0 or make observability GRAFANA=0 to disable it. Loki has no UI of its own.)
+make status       # pods in the demo, monitoring, and logging namespaces
 make down         # tear everything down
 ```
+
+`make help` lists every target.
 
 Planned, not implemented yet:
 
@@ -188,8 +188,12 @@ The detailed task breakdown, with a goal, requirements, and validation criteria 
 - [ ] ServiceNow integration and GitHub Issues fallback
 - [ ] Runbook allowlist, autonomy levels, approval gate, and audit log
 - [ ] Evaluation harness across all fault scenarios
-- [ ] ADR on the autonomy and trust model
+- [x] ADR on the autonomy and trust model
 - [ ] Bicep/Terraform module to deploy the demo onto AKS
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the engineering conventions and how to work with the roadmap.
 
 ## License
 

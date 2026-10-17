@@ -38,6 +38,13 @@ test: ## Run unit tests
 vet: ## Run go vet
 	go vet ./...
 
+.PHONY: lint
+lint: ## Run golangci-lint (config in .golangci.yml)
+	@command -v golangci-lint >/dev/null || { echo "missing: golangci-lint $(GOLANGCI_LINT_VERSION) (go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION))"; exit 1; }
+	@lv=v$$(golangci-lint version --short); \
+	[ "$$lv" = "$(GOLANGCI_LINT_VERSION)" ] || echo "warning: golangci-lint $$lv, pinned $(GOLANGCI_LINT_VERSION)"
+	golangci-lint run ./...
+
 .PHONY: tools
 tools: ## Check that required tools are installed
 	@ok=1; \
@@ -96,6 +103,13 @@ deploy: image ## Deploy the demo workload (orders, inventory, loadgen) and wait 
 	  'kind: Kustomization' \
 	  'resources: [../../deploy/demo]' \
 	  'images: [{name: demo-svc, newName: demo-svc, newTag: "$(VERSION)"}]' \
+	  'patches:' \
+	  '  - target: {kind: Deployment}' \
+	  '    patch: |-' \
+	  '      {apiVersion: apps/v1, kind: Deployment, metadata: {name: any, annotations: {' \
+	  '        kubernetes.io/change-cause: "deploy demo-svc $(VERSION)",' \
+	  '        app.kubernetes.io/version: "$(VERSION)",' \
+	  '        incident-copilot.dev/commit: "$(COMMIT)"}}}' \
 	  > build/deploy/kustomization.yaml
 	$(KUBECTL) apply -k build/deploy
 	@for d in inventory orders loadgen; do \
