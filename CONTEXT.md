@@ -25,8 +25,12 @@ One problem with one Target, gathering every Signal about it; the unit that is i
 _Avoid_: alert, case, issue
 
 **Target**:
-The workload an Incident is about, named by provider, platform, Location, kind, and name (plus namespace where the platform has one) rather than by any one running copy of it; an Incident may have none when no Signal names a workload.
+The workload an Incident is about, named by platform, Location, kind, and name (plus namespace where the platform has one) rather than by any one running copy of it; an Incident may have none when no Signal names a workload.
 _Avoid_: resource, pod, service
+
+**Platform**:
+The kind of runtime a Target runs on, such as Kubernetes, Lambda, or ECS; one Location may host several.
+_Avoid_: provider, cloud, backend
 
 **Location**:
 Where a Target lives on its provider and platform: a cluster, an account and region, a project, or a subscription; named by the operator, uniquely, where the provider has no name for it.
