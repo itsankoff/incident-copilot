@@ -18,6 +18,14 @@ _Avoid_: alarm
 A built-in rule, run by a Sensor, that watches a platform directly for a known failure (a crash loop, an OOM kill, a stuck rollout) and produces a Signal, covering failures the operator has no alert rule for.
 _Avoid_: anomaly detector, monitor
 
+**Signal source**:
+One configured sender of Signals, such as one Alertmanager or one Sensor, with its own credential, default Location, label mapping, and way of showing that a firing Signal is still live.
+_Avoid_: integration, receiver, webhook
+
+**Source adapter**:
+What turns the payload of one kind of Signal source (Alertmanager, Datadog, CloudWatch) into Signals, after checking that the sender is who it claims to be.
+_Avoid_: normalizer, parser
+
 ### Incidents
 
 **Incident**:
