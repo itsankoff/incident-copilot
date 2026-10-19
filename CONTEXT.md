@@ -40,6 +40,12 @@ _Avoid_: cluster, region, scope
 The deterministic step that decides whether a Signal opens a new Incident, joins an open one, or reopens a closed one.
 _Avoid_: correlation, grouping
 
+### Investigation
+
+**Evidence query**:
+A typed, read-only question about a Target or its Location, answered by that Location's Sensor or, for sources outside it, by the Control plane; its answer is redacted and size-bounded before it reaches the LLM.
+_Avoid_: tool, tool call, lookup
+
 ### Response
 
 **Runbook**:

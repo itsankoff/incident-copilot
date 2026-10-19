@@ -2,7 +2,7 @@
 
 **An autonomous incident responder for Kubernetes platforms.** incident-copilot receives an alert, investigates it with real observability and delivery tools, writes a structured root-cause analysis into your ticketing system, and proposes a remediation from an allowlist that runs only as far as its autonomy level permits.
 
-It is written in Go, calls LLM APIs directly with tool calling (no agent framework), exposes its tools over the [Model Context Protocol](https://modelcontextprotocol.io), and ships with an evaluation harness that measures how often the agent gets the diagnosis right.
+It is written in Go, calls LLM APIs directly with tool calling (no agent framework), investigates with typed, read-only tools of its own, and ships with an evaluation harness that measures how often the agent gets the diagnosis right.
 
 > **Status:** early development. The design below is the target; see [Roadmap](#roadmap) for what is implemented.
 
@@ -25,11 +25,11 @@ It is built for environments where an AI touching production must be **controlle
 ```mermaid
 flowchart LR
     AM[Alertmanager] -- webhook --> AG[Agent loop]
-    AG <-- tool calls --> MCP[MCP tool server]
-    MCP --> PROM[(Prometheus)]
-    MCP --> LOKI[(Loki)]
-    MCP --> K8S[(Kubernetes API)]
-    MCP --> GH[(GitHub API)]
+    AG <-- tool calls --> TOOLS[Investigation tools]
+    TOOLS --> PROM[(Prometheus)]
+    TOOLS --> LOKI[(Loki)]
+    TOOLS --> K8S[(Kubernetes API)]
+    TOOLS --> GH[(GitHub API)]
     AG <--> LLM[LLM provider<br/>Azure OpenAI / others]
     AG -- RCA --> TKT[Ticketing<br/>ServiceNow / GitHub Issues]
     AG -- proposal --> EX[Executor<br/>no LLM]
@@ -51,7 +51,7 @@ Component boundaries are described in [`docs/adr/arch-diagram.md`](docs/adr/arch
 
 ### Investigation tools
 
-The tools are served by an MCP server, so any MCP-capable agent or client can use them, not only incident-copilot.
+The tools are typed and scoped to the alerting workload's location. The model never writes raw PromQL or LogQL and never gets a shell. Each result is redacted and size-capped before it reaches the LLM. Vendor MCP servers (CloudWatch, Azure Monitor, Datadog) can be plugged in later as an MCP client, behind an explicit tool allowlist and the same redaction and budgets. incident-copilot does not serve its tools over MCP to other agents, because that would bypass its audit log, scope checks, and budgets.
 
 | Tool | Source | Answers |
 |---|---|---|
@@ -174,7 +174,7 @@ Configuration is read from environment variables (a `.env` file is supported for
 ## Design choices
 
 - **Go, no agent framework.** The orchestration loop, tool dispatch, retries, and budgets are plain Go code that can be read and tested.
-- **Tools over MCP.** The investigation tools are decoupled from the agent and can be plugged into other MCP-capable agents and platforms.
+- **Typed tools, MCP as a client only.** Investigation tools are typed, read-only queries rather than raw query languages or a shell. MCP is used only to consume vendor servers, behind an allowlist, redaction, and byte budgets.
 - **Pluggable LLM provider.** A small provider interface. Azure OpenAI is the default, and other providers are drop-in.
 - **Adapters for ticketing and approval.** ServiceNow, GitHub Issues, and Slack sit behind interfaces, so adding Jira or PagerDuty does not touch the agent.
 - **Safety before autonomy.** Allowlists, autonomy levels, and the audit log are core parts of the system, not add-ons.
@@ -184,7 +184,7 @@ Configuration is read from environment variables (a `.env` file is supported for
 The detailed task breakdown, with a goal, requirements, and validation criteria for each task, is in [`docs/roadmap.md`](docs/roadmap.md). The demo environment is designed in [`docs/design/demo-environment.md`](docs/design/demo-environment.md).
 
 - [ ] kind cluster, demo service with fault injection, and the observability stack, wired up with a Makefile
-- [ ] Agent loop, MCP tool server, and RCA generation for one fault end to end
+- [ ] Agent loop, investigation tools, and RCA generation for one fault end to end
 - [ ] ServiceNow integration and GitHub Issues fallback
 - [ ] Runbook allowlist, autonomy levels, approval gate, and audit log
 - [ ] Evaluation harness across all fault scenarios
