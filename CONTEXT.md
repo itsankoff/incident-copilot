@@ -29,7 +29,7 @@ _Avoid_: normalizer, parser
 ### Incidents
 
 **Incident**:
-One problem with one Target, gathering every Signal about it; the unit that is investigated, gets one ticket, and carries the per-incident limits on actions.
+One problem with one Target, gathering every Signal about it; the unit that is investigated and gets one ticket. It is open while its Signals fire, resolved once they have all ended, and closed when its ticket is closed.
 _Avoid_: alert, case, issue
 
 **Target**:
@@ -45,7 +45,7 @@ Where a Target lives on its provider and platform: a cluster, an account and reg
 _Avoid_: cluster, region, scope
 
 **Triage**:
-The deterministic step that decides whether a Signal opens a new Incident, joins an open one, or reopens a closed one.
+The deterministic step that decides whether a Signal opens a new Incident, joins an open one, or reopens a resolved one.
 _Avoid_: correlation, grouping
 
 ### Investigation
@@ -65,29 +65,33 @@ _Avoid_: proxy, tunnel, bridge
 ### Response
 
 **Runbook**:
-One allowlisted, typed remediation action registered in code, with bounded parameters and a maximum autonomy level.
-_Avoid_: playbook, script, fix
+A remediation procedure written or approved by humans, assigned to Targets or bound to Alerts, with bounded parameters and an autonomy level that may let it run without approval.
+_Avoid_: script, fix
 
 **Proposal**:
-The Control plane's request to run one Runbook against one target, which is data and never a command.
+The Control plane's request to an Executor to run one Runbook or one approved Plan against the Incident's Target, which is data and never a command.
 _Avoid_: action, recommendation
 
+**Plan**:
+Remediation steps the LLM writes when no Runbook fits, which a human reviews, may edit, and approves before an Executor runs them; a Plan that worked can be promoted to a Runbook.
+_Avoid_: fix, script, Advice
+
 **Advice**:
-Remediation steps written in free text when no Runbook fits, for a human to follow by hand; it never reaches the Executor.
+Remediation written in free text for a human to follow by hand, for steps no Executor can run; it never reaches the Executor.
 _Avoid_: suggestion, fix
 
 **Autonomy level**:
-How far a Proposal may go on its own: L0 observe, L1 suggest, L2 approve, L3 autonomous.
+How far a Runbook or Plan may go on its own: L0 observe, L1 suggest, L2 approve, L3 autonomous.
 _Avoid_: mode, permission level
 
 **Executor**:
-The only component that changes state, deployed in or next to the Location it acts on; it decides the effective autonomy level in code and never calls an LLM.
+The only component that changes state, deployed in or next to the Location it acts on; it runs what the Control plane sends, only with that Location's own credentials, and never calls an LLM.
 _Avoid_: runner, actuator
 
 ### Deployment
 
 **Control plane**:
-The centrally run part of incident-copilot that takes in Signals, runs Triage, investigates, writes tickets, and hands Proposals to Executors; it serves one or more Environments, has read-only access, and never changes state.
+The centrally run part of incident-copilot that takes in Signals, runs Triage, investigates, writes tickets, and hands Proposals to Executors; it is the trusted part that checks every LLM output and collects approvals. It serves one or more Environments, has read-only access, and never changes state itself.
 _Avoid_: agent, install, server
 
 **Sensor**:
