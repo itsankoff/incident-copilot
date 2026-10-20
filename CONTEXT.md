@@ -77,7 +77,7 @@ The remediation steps the LLM drafts for an Incident from its RCA, composed only
 _Avoid_: suggestion, fix, recommendation
 
 **Plan**:
-Advice a human has approved: an ordered list of Actions with their arguments, all on the Incident's Target, and the only thing an Executor runs; it is data and never a command, and a human may always carry it out by hand instead.
+Advice a human has approved: an ordered list of Actions with their arguments, all on the Incident's Target, and the only thing an Executor runs; it carries one Autonomy level for the whole Plan, is data and never a command, and a human may always carry it out by hand instead.
 _Avoid_: proposal, job, script
 
 **Autonomy level**:
