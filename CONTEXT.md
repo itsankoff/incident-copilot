@@ -51,8 +51,16 @@ _Avoid_: correlation, grouping
 ### Investigation
 
 **Evidence query**:
-A typed, read-only question about a Target or its Location, answered by that Location's Sensor or, for sources outside it, by the Control plane; its answer is redacted and size-bounded before it reaches the LLM.
+One read-only call the LLM makes to an Evidence source during an investigation; its answer is redacted and size-bounded before it reaches the LLM and carries a reference the RCA cites.
 _Avoid_: tool, tool call, lookup
+
+**Evidence source**:
+One configured place the LLM can read evidence from, such as a Location's Sensor or an MCP server for code, logs, or errors, with its own read-only credential and its own list of allowed tools; each backend is reached through exactly one Evidence source.
+_Avoid_: integration, connector, plugin
+
+**Sensor relay**:
+The way a Location's Sensor carries the Control plane's calls to an MCP server inside that Location, over the connection the Sensor opened, so the Location's credentials never leave it.
+_Avoid_: proxy, tunnel, bridge
 
 ### Response
 
@@ -83,7 +91,7 @@ The centrally run part of incident-copilot that takes in Signals, runs Triage, i
 _Avoid_: agent, install, server
 
 **Sensor**:
-A read-only component deployed in a Location that runs Detectors and answers the Control plane's evidence queries about Targets there; it never calls an LLM and never changes state.
+A read-only component deployed in a Location that runs Detectors, answers the Control plane's Evidence queries about Targets there, and can act as a Sensor relay; it never calls an LLM and never changes state.
 _Avoid_: agent, collector, probe, investigator
 
 **Environment**:
