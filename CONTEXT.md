@@ -65,16 +65,20 @@ _Avoid_: proxy, tunnel, bridge
 ### Response
 
 **Runbook**:
-A remediation procedure written or approved by humans, assigned to Targets or bound to Alerts, with bounded parameters and an autonomy level that may let it run without approval.
-_Avoid_: script, fix
+An operator's procedure, imported once from a page or document and approved by a human, recorded as guidance and actions for a Signal and Target; the investigation reads its guidance and the remediation reads its actions, and it never runs by itself.
+_Avoid_: playbook, investigation guide, script, fix
+
+**Action**:
+One typed operation an Executor offers, such as restarting a pod or scaling a workload, with arguments it checks; the only thing a step of a Plan can do.
+_Avoid_: command, tool, job
 
 **Advice**:
-The remediation steps the LLM drafts for an Incident from its RCA, citing the RCA's claims and evidence; it does nothing until a human reviews, may edit, and approves it, which turns it into a Plan.
+The remediation steps the LLM drafts for an Incident from its RCA, composed only of Actions that Executors offer and informed by the Incident's Runbooks, citing the RCA's claims, the evidence, and the Runbooks it used; it does nothing until a human reviews, may edit, and approves it, which turns it into a Plan.
 _Avoid_: suggestion, fix, recommendation
 
 **Plan**:
-The only thing an Executor runs, which is data and never a command: either Advice a human has approved, or a Runbook with its parameters filled in for the Incident's Target; a human may always carry it out by hand instead, and a Plan that worked can be promoted to a Runbook.
-_Avoid_: action, proposal, job, script
+Advice a human has approved: an ordered list of Actions with their arguments, all on the Incident's Target, and the only thing an Executor runs; it is data and never a command, and a human may always carry it out by hand instead.
+_Avoid_: proposal, job, script
 
 **Autonomy level**:
 How far a Plan may go on its own: L0 observe, L1 suggest, L2 approve, L3 autonomous.
