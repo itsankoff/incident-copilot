@@ -68,20 +68,16 @@ _Avoid_: proxy, tunnel, bridge
 A remediation procedure written or approved by humans, assigned to Targets or bound to Alerts, with bounded parameters and an autonomy level that may let it run without approval.
 _Avoid_: script, fix
 
-**Proposal**:
-The Control plane's request to an Executor to run one Runbook or one approved Plan against the Incident's Target, which is data and never a command.
-_Avoid_: action, recommendation
+**Advice**:
+The remediation steps the LLM drafts for an Incident from its RCA, citing the RCA's claims and evidence; it does nothing until a human reviews, may edit, and approves it, which turns it into a Plan.
+_Avoid_: suggestion, fix, recommendation
 
 **Plan**:
-Remediation steps the LLM writes when no Runbook fits, which a human reviews, may edit, and approves before an Executor runs them; a Plan that worked can be promoted to a Runbook.
-_Avoid_: fix, script, Advice
-
-**Advice**:
-Remediation written in free text for a human to follow by hand, for steps no Executor can run; it never reaches the Executor.
-_Avoid_: suggestion, fix
+The only thing an Executor runs, which is data and never a command: either Advice a human has approved, or a Runbook with its parameters filled in for the Incident's Target; a human may always carry it out by hand instead, and a Plan that worked can be promoted to a Runbook.
+_Avoid_: action, proposal, job, script
 
 **Autonomy level**:
-How far a Runbook or Plan may go on its own: L0 observe, L1 suggest, L2 approve, L3 autonomous.
+How far a Plan may go on its own: L0 observe, L1 suggest, L2 approve, L3 autonomous.
 _Avoid_: mode, permission level
 
 **Executor**:
@@ -91,7 +87,7 @@ _Avoid_: runner, actuator
 ### Deployment
 
 **Control plane**:
-The centrally run part of incident-copilot that takes in Signals, runs Triage, investigates, writes tickets, and hands Proposals to Executors; it is the trusted part that checks every LLM output and collects approvals. It serves one or more Environments, has read-only access, and never changes state itself.
+The centrally run part of incident-copilot that takes in Signals, runs Triage, investigates, writes tickets, and hands Plans to Executors; it is the trusted part that checks every LLM output and collects approvals. It serves one or more Environments, has read-only access, and never changes state itself.
 _Avoid_: agent, install, server
 
 **Sensor**:
