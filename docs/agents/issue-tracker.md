@@ -43,3 +43,24 @@ Used by `/wayfinder`. The **map** is a single issue with **child** issues as tic
 - **Frontier query**: list the map's open children (`gh issue list --state open`, scoped to the map's sub-issues / task list), drop any with an open blocker (`issue_dependencies_summary.blocked_by > 0`, or an open issue in the `Blocked by` line) or an assignee; first in map order wins.
 - **Claim**: `gh issue edit <n> --add-assignee @me`, the session's first write.
 - **Resolve**: `gh issue comment <n> --body "<answer>"`, then `gh issue close <n>`, then append a context pointer (gist + link) to the map's Decisions-so-far.
+
+## Project board
+
+Issues are tracked on GitHub Project #1 "Incident Copilot" (owner `itsankoff`, project id `PVT_kwHOABof4c4BoEBl`). New issues land in Backlog automatically. Whenever you manage an issue or PR, keep the issue's Status in step with its real state.
+
+| Status      | Option id  | When                                                                 |
+| ----------- | ---------- | -------------------------------------------------------------------- |
+| Backlog     | `f75ad846` | Newly created                                                        |
+| Need Human  | `df61d20c` | Needs human input or intervention (`ready-for-human`)                |
+| AFK Ready   | `61e4505c` | Ready for autonomous agent execution (`ready-for-agent`)             |
+| In Progress | `47fc9ee4` | Picked up for implementation                                         |
+| In Review   | `df73e18b` | Work ready: PR open, or resolution posted                            |
+| Done        | `98236657` | PR merged, or research/non-code discussion concluded                 |
+| Won't Do    | `aefd8546` | Will not be actioned (`wontfix`)                                     |
+
+Set a status (Status field id `PVTSSF_lAHOABof4c4BoEBlzhmlzeU`; needs the `project` token scope):
+
+```sh
+ITEM=$(gh project item-list 1 --owner itsankoff --limit 500 --format json --jq '.items[] | select(.content.number==<n>) | .id')
+gh project item-edit --project-id PVT_kwHOABof4c4BoEBl --id "$ITEM" --field-id PVTSSF_lAHOABof4c4BoEBlzhmlzeU --single-select-option-id <option-id>
+```
