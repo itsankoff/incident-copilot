@@ -16,7 +16,7 @@ _Avoid_: alarm
 
 **Detector**:
 A built-in rule, run by a Sensor, that watches a platform directly for a known failure (a crash loop, an OOM kill, a stuck rollout) and produces a Signal, covering failures the operator has no alert rule for.
-_Avoid_: anomaly detector, monitor
+_Avoid_: anomaly detector, monitor, Sensor
 
 **Signal source**:
 One configured sender of Signals, such as one Alertmanager or one Sensor, with its own credential, default Location, label mapping, and way of showing that a firing Signal is still live.
@@ -119,7 +119,7 @@ The centrally run part of incident-copilot that takes in Signals, runs Triage, i
 _Avoid_: agent, install, server
 
 **Sensor**:
-A read-only component deployed in a Location that runs Detectors, answers the Control plane's Evidence queries about Targets there, and can act as a Sensor relay; it never calls an LLM and never changes state.
+A read-only component deployed in a Location that runs that Location's Detectors, the way an Executor runs its Actions, answers the Control plane's Evidence queries about Targets there, and can act as a Sensor relay; it never calls an LLM and never changes state.
 _Avoid_: agent, collector, probe, investigator
 
 **Environment**:
