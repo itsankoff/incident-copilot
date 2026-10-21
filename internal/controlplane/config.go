@@ -37,19 +37,19 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	}
 
 	cfg := Config{
-		ListenAddr: env("LISTEN_ADDR", ":8080"),
-		StatePath:  env("STATE_PATH", "incident-copilot.db"),
-		AuditPath:  env("AUDIT_PATH", "audit.jsonl"),
+		ListenAddr: env("IC_LISTEN_ADDR", ":8080"),
+		StatePath:  env("IC_STATE_PATH", "incident-copilot.db"),
+		AuditPath:  env("IC_AUDIT_PATH", "audit.jsonl"),
 		Alertmanager: signal.Source{
 			Kind:     "alertmanager",
-			Instance: need("ALERTMANAGER_INSTANCE"),
-			Token:    need("ALERTMANAGER_TOKEN"),
-			Location: need("ALERTMANAGER_LOCATION"),
+			Instance: need("IC_ALERTMANAGER_INSTANCE"),
+			Token:    need("IC_ALERTMANAGER_TOKEN"),
+			Location: need("IC_ALERTMANAGER_LOCATION"),
 			Mapping:  signal.KubePrometheus,
 		},
-		GitHubAPIURL: env("GITHUB_API_URL", "https://api.github.com"),
-		GitHubRepo:   need("GITHUB_REPO"),
-		GitHubToken:  need("GITHUB_TOKEN"),
+		GitHubAPIURL: env("IC_GITHUB_API_URL", "https://api.github.com"),
+		GitHubRepo:   need("IC_GITHUB_REPO"),
+		GitHubToken:  need("IC_GITHUB_TOKEN"),
 	}
 	if missing != nil {
 		return Config{}, missing

@@ -148,19 +148,21 @@ make eval                  # run the evaluation harness across all fault scenari
 
 ## Configuration
 
-`incident-copilot -role control-plane` reads its configuration from environment variables. It serves the Alertmanager webhook at `/webhook/alertmanager`, and Alertmanager must send `Authorization: Bearer <ALERTMANAGER_TOKEN>`. The `sensor` and `executor` roles are not implemented yet.
+`incident-copilot -role control-plane` reads its configuration from environment variables. It serves the Alertmanager webhook at `/webhook/alertmanager`, and Alertmanager must send `Authorization: Bearer <IC_ALERTMANAGER_TOKEN>`. The `sensor` and `executor` roles are not implemented yet.
+
+For local runs, copy [`.env.demo.example`](.env.demo.example) to `.env.demo`, which is gitignored, and fill in the secrets.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `LISTEN_ADDR` | `:8080` | HTTP listen address |
-| `STATE_PATH` | `incident-copilot.db` | SQLite file holding Incidents and ticket references |
-| `AUDIT_PATH` | `audit.jsonl` | Hash-chained audit log |
-| `ALERTMANAGER_INSTANCE` | required | Name of the Alertmanager Signal source, the prefix of every Signal key |
-| `ALERTMANAGER_TOKEN` | required | Bearer token that Alertmanager sends |
-| `ALERTMANAGER_LOCATION` | required | Location (cluster name) of every Target resolved from its Alerts |
-| `GITHUB_API_URL` | `https://api.github.com` | GitHub REST API base URL |
-| `GITHUB_REPO` | required | `owner/name` of the repository that gets one issue per Incident |
-| `GITHUB_TOKEN` | required | Token allowed to create issues and comments in `GITHUB_REPO` |
+| `IC_LISTEN_ADDR` | `:8080` | HTTP listen address |
+| `IC_STATE_PATH` | `incident-copilot.db` | SQLite file holding Incidents and ticket references |
+| `IC_AUDIT_PATH` | `audit.jsonl` | Hash-chained audit log |
+| `IC_ALERTMANAGER_INSTANCE` | required | Name of the Alertmanager Signal source, the prefix of every Signal key |
+| `IC_ALERTMANAGER_TOKEN` | required | Bearer token that Alertmanager sends |
+| `IC_ALERTMANAGER_LOCATION` | required | Location (cluster name) of every Target resolved from its Alerts |
+| `IC_GITHUB_API_URL` | `https://api.github.com` | GitHub REST API base URL |
+| `IC_GITHUB_REPO` | required | `owner/name` of the repository that gets one issue per Incident |
+| `IC_GITHUB_TOKEN` | required | Token allowed to create issues and comments in `IC_GITHUB_REPO` |
 
 ## Design choices
 

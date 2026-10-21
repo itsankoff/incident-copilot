@@ -13,11 +13,11 @@ func envMap(m map[string]string) func(string) string {
 
 func required() map[string]string {
 	return map[string]string{
-		"ALERTMANAGER_INSTANCE": "kind-am",
-		"ALERTMANAGER_TOKEN":    "t1",
-		"ALERTMANAGER_LOCATION": "kind-incident-copilot",
-		"GITHUB_REPO":           "o/r",
-		"GITHUB_TOKEN":          "gh",
+		"IC_ALERTMANAGER_INSTANCE": "kind-am",
+		"IC_ALERTMANAGER_TOKEN":    "t1",
+		"IC_ALERTMANAGER_LOCATION": "kind-incident-copilot",
+		"IC_GITHUB_REPO":           "o/r",
+		"IC_GITHUB_TOKEN":          "gh",
 	}
 }
 
