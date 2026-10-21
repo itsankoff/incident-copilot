@@ -4,7 +4,7 @@
 
 It is written in Go, calls LLM APIs directly with tool calling (no agent framework), and ships with an evaluation harness that measures how often the diagnosis is right. Kubernetes is the first platform. Managed Kubernetes (EKS, GKE, AKS) comes next.
 
-> **Status:** early development. The design below is the target; see [Roadmap](#roadmap) for what is implemented.
+> **Status:** early development, actively worked on. Progress is tracked on the [project board](https://github.com/users/itsankoff/projects/1) (Backlog → AFK Ready / Need Human → In Progress → In Review → Done). The design below is the target; see [Roadmap](#roadmap) for what is implemented.
 
 ---
 
@@ -177,9 +177,10 @@ To check the whole path against a real GitHub repository, follow the manual test
 
 ## Roadmap
 
-Planned work is tracked in [GitHub Issues](https://github.com/itsankoff/incident-copilot/issues), starting from the [Wayfinder map](https://github.com/itsankoff/incident-copilot/issues/3). The demo environment is designed in [`docs/design/demo-environment.md`](docs/design/demo-environment.md).
+Planned work is tracked in [GitHub Issues](https://github.com/itsankoff/incident-copilot/issues), starting from the [Wayfinder map](https://github.com/itsankoff/incident-copilot/issues/3), and its live status is on the [project board](https://github.com/users/itsankoff/projects/1). Each change goes from a specced issue to a reviewed pull request, and the board follows it from Backlog to Done. The demo environment is designed in [`docs/design/demo-environment.md`](docs/design/demo-environment.md).
 
-- [ ] kind cluster, demo service with fault injection, and the observability stack, wired up with a Makefile
+- [x] kind cluster, demo service, and the observability stack, wired up with a Makefile
+- [ ] Fault injection in the demo service
 - [ ] Agent loop, investigation tools, and RCA generation for one fault end to end
 - [ ] ServiceNow integration and GitHub Issues fallback
 - [ ] Runbook allowlist, autonomy levels, approval gate, and audit log
