@@ -81,7 +81,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ### Issue tracker
 
-Issues are tracked in GitHub Issues for itsankoff/incident-copilot, managed with the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues are tracked in GitHub Issues for itsankoff/incident-copilot, managed with the `gh` CLI. Keep each issue's Project board Status in sync when managing issues/PRs. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
