@@ -157,7 +157,7 @@ make eval                  # run the evaluation harness across all fault scenari
 
 ## Roadmap
 
-The detailed task breakdown, with a goal, requirements, and validation criteria for each task, is in [`docs/roadmap.md`](docs/roadmap.md). The demo environment is designed in [`docs/design/demo-environment.md`](docs/design/demo-environment.md).
+Planned work is tracked in [GitHub Issues](https://github.com/itsankoff/incident-copilot/issues), starting from the [Wayfinder map](https://github.com/itsankoff/incident-copilot/issues/3). The demo environment is designed in [`docs/design/demo-environment.md`](docs/design/demo-environment.md).
 
 - [ ] kind cluster, demo service with fault injection, and the observability stack, wired up with a Makefile
 - [ ] Agent loop, investigation tools, and RCA generation for one fault end to end
@@ -169,7 +169,7 @@ The detailed task breakdown, with a goal, requirements, and validation criteria 
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the engineering conventions and how to work with the roadmap.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the engineering conventions.
 
 ## License
 
