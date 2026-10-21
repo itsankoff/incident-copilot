@@ -82,36 +82,36 @@
 <rect x="1095.3" y="704" width="80.7" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
 <text x="1135.6666666666665" y="741.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Actions</text>
 <text x="1135.6666666666665" y="758.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">runs</text>
-<path d="M1000,495.0 L1100,495.0" fill="none" stroke="#8c959f" stroke-width="2"/>
-<path d="M1100,495.0 L1100,340 L1176,340" fill="none" stroke="#8c959f" stroke-width="2" marker-end="url(#arr)"/>
-<path d="M1100,495.0 L1100,610 L1176,610" fill="none" stroke="#8c959f" stroke-width="2" marker-end="url(#arr)"/>
-<rect x="1180" y="280" width="480" height="120" rx="12" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
-<rect x="1180" y="254" width="279" height="22" rx="5" fill="#eaeef2"/>
-<text x="1190" y="265.0" font-size="13" font-weight="500" fill="#424a53" text-anchor="start" dominant-baseline="middle">Root-cause analysis, in your ticket</text>
-<rect x="1194.0" y="294" width="105.5" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
-<text x="1246.75" y="340.0" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Root cause</text>
-<rect x="1309.5" y="294" width="105.5" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
-<text x="1362.25" y="331.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Introduced</text>
-<text x="1362.25" y="348.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">by</text>
-<rect x="1425.0" y="294" width="105.5" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
-<text x="1477.75" y="331.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Cited</text>
-<text x="1477.75" y="348.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">evidence</text>
-<rect x="1540.5" y="294" width="105.5" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
-<text x="1593.25" y="340.0" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Confidence</text>
-<text x="1190" y="422.0" font-size="14" font-weight="400" fill="#57606a" text-anchor="start" dominant-baseline="middle">GitHub Issues  ·  ServiceNow</text>
-<rect x="1180" y="550" width="480" height="120" rx="12" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
-<rect x="1180" y="524" width="257" height="22" rx="5" fill="#eaeef2"/>
-<text x="1190" y="535.0" font-size="13" font-weight="500" fill="#424a53" text-anchor="start" dominant-baseline="middle">Remediation, approved by a human</text>
-<rect x="1194.0" y="564" width="128.0" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
-<text x="1258.0" y="601.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Advice from</text>
-<text x="1258.0" y="618.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">typed Actions</text>
-<rect x="1356.0" y="564" width="128.0" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
-<text x="1420.0" y="601.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">A human</text>
-<text x="1420.0" y="618.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">approves it</text>
-<rect x="1518.0" y="564" width="128.0" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
-<text x="1582.0" y="601.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Executor</text>
-<text x="1582.0" y="618.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">runs the Plan</text>
-<path d="M1327.0,610 L1349.0,610" fill="none" stroke="#8c959f" stroke-width="2" marker-end="url(#arr)"/>
-<path d="M1489.0,610 L1511.0,610" fill="none" stroke="#8c959f" stroke-width="2" marker-end="url(#arr)"/>
-<text x="1190" y="692.0" font-size="14" font-weight="400" fill="#57606a" text-anchor="start" dominant-baseline="middle">Executor: one per cluster, the only writer, never calls an LLM</text>
+<path d="M1000,495.0 L1030,495.0" fill="none" stroke="#8c959f" stroke-width="2"/>
+<path d="M1030,495.0 L1030,355 L1196,355" fill="none" stroke="#8c959f" stroke-width="2" marker-end="url(#arr)"/>
+<path d="M1030,495.0 L1030,615 L1196,615" fill="none" stroke="#8c959f" stroke-width="2" marker-end="url(#arr)"/>
+<text x="1115.0" y="337.0" font-size="20" font-weight="700" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Investigate</text>
+<text x="1115.0" y="597.0" font-size="20" font-weight="700" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Fix</text>
+<rect x="1200" y="280" width="470" height="150" rx="12" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<text x="1216" y="306" dominant-baseline="middle"><tspan font-size="22" font-weight="700" fill="#24292f">RCA</tspan><tspan dx="10" font-size="14" fill="#57606a">in your ticket</tspan></text>
+<rect x="1214.0" y="328" width="103.0" height="88" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="1265.5" y="372.0" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Root cause</text>
+<rect x="1327.0" y="328" width="103.0" height="88" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="1378.5" y="363.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Introduced</text>
+<text x="1378.5" y="380.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">by</text>
+<rect x="1440.0" y="328" width="103.0" height="88" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="1491.5" y="363.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Cited</text>
+<text x="1491.5" y="380.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">evidence</text>
+<rect x="1553.0" y="328" width="103.0" height="88" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="1604.5" y="372.0" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Confidence</text>
+<text x="1210" y="452.0" font-size="14" font-weight="400" fill="#57606a" text-anchor="start" dominant-baseline="middle">GitHub Issues  ·  ServiceNow</text>
+<rect x="1200" y="540" width="470" height="150" rx="12" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<text x="1216" y="566" dominant-baseline="middle"><tspan font-size="22" font-weight="700" fill="#24292f">Remediation Plan</tspan><tspan dx="10" font-size="14" fill="#57606a">approved by a human</tspan></text>
+<rect x="1214.0" y="588" width="124.7" height="88" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="1276.3333333333333" y="623.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Advice from</text>
+<text x="1276.3333333333333" y="640.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">typed Actions</text>
+<rect x="1372.7" y="588" width="124.7" height="88" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="1435.0" y="623.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">A human</text>
+<text x="1435.0" y="640.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">approves it</text>
+<rect x="1531.3" y="588" width="124.7" height="88" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="1593.6666666666667" y="623.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Executor</text>
+<text x="1593.6666666666667" y="640.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">runs the Plan</text>
+<path d="M1343.7,632 L1365.7,632" fill="none" stroke="#8c959f" stroke-width="2" marker-end="url(#arr)"/>
+<path d="M1502.3,632 L1524.3,632" fill="none" stroke="#8c959f" stroke-width="2" marker-end="url(#arr)"/>
+<text x="1210" y="712.0" font-size="14" font-weight="400" fill="#57606a" text-anchor="start" dominant-baseline="middle">Executor: one per cluster, the only writer, never calls an LLM</text>
 </svg>
