@@ -5,7 +5,7 @@
 - [`docs/roadmap.md`](docs/roadmap.md): the task plan and current status. Work through it in order, and treat a task's validation list as its definition of done.
 - [`docs/design/`](docs/design): design docs, one per milestone that needs one.
 - [`docs/adr/`](docs/adr): architecture decision records and the [architecture diagram](docs/adr/arch-diagram.md).
-- [ADR 0001: Safety invariants](docs/adr/0001-autonomy-and-trust-model.md#safety-invariants): never weaken these. Relaxing one needs a new ADR that supersedes ADR 0001.
+- [ADR 0003: Safety invariants](docs/adr/0003-trust-model-and-safety-invariants.md#safety-invariants): never weaken these. Relaxing one needs a new ADR that supersedes ADR 0003.
 
 Check what actually exists before assuming a package, command, or file is present. Much of the architecture is still the target, not code.
 

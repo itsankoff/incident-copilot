@@ -1,6 +1,6 @@
 # ADR 0001: Autonomy and trust model
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR 0003: Trust model and safety invariants](0003-trust-model-and-safety-invariants.md). Kept as history; its safety invariants are restated there.
 - **Date:** 2026-10-13
 - **Deciders:** @itsankoff
 - **Roadmap:** M4.1. Must be accepted before M4.2 (runbook registry and executor) starts.
