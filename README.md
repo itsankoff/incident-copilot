@@ -23,23 +23,7 @@ It is built for environments where an AI touching production must be **controlle
 
 ## How it works
 
-```mermaid
-flowchart LR
-    AM[Alertmanager] -- authenticated webhook --> CP
-    subgraph CP[Control plane]
-        TR[Triage] --> RCA[RCA loop] --> REM[Remediation loop]
-    end
-    CP <--> LLM[LLM provider]
-    CP -- RCA, Advice --> TKT[Ticketing<br/>GitHub Issues / ServiceNow]
-    H[Human] -- reviews, edits, approves --> CP
-    subgraph LOC[Each cluster]
-        SEN[Sensor<br/>read-only]
-        EX[Executor<br/>the only writer]
-    end
-    SEN -. Detector Signals, evidence .-> CP
-    CP -. approved Plan, one step at a time .-> EX
-    EX --> K8S[(Kubernetes API)]
-```
+![incident-copilot architecture: alerts and Detectors come in, the Control plane investigates with an LLM, Runbooks, and read-only evidence, and writes an RCA to your ticket and Advice that a human approves before the Executor runs it](docs/images/architecture.svg)
 
 1. **Signal.** An alert from your monitoring, or a built-in Detector in the cluster, becomes a Signal.
 2. **Triage.** Deterministic code joins Signals about the same workload into one Incident with one ticket.

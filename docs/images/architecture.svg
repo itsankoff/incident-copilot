@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1700 840" width="1700" height="840" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title>incident-copilot architecture</title>
+<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8c959f"/></marker></defs>
+<rect x="0" y="0" width="1700" height="840" rx="16" fill="#ffffff"/>
+<rect x="700" y="440" width="300" height="110" rx="14" fill="#0969da"/>
+<text x="850.0" y="482.0" font-size="28" font-weight="700" fill="#ffffff" text-anchor="middle" dominant-baseline="middle">incident-copilot</text>
+<text x="850.0" y="518.0" font-size="18" font-weight="500" fill="#ddf4ff" text-anchor="middle" dominant-baseline="middle">Control plane</text>
+<rect x="560" y="50" width="290" height="120" rx="12" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<rect x="560" y="24" width="168" height="22" rx="5" fill="#eaeef2"/>
+<text x="570" y="35.0" font-size="13" font-weight="500" fill="#424a53" text-anchor="start" dominant-baseline="middle">Large language model</text>
+<rect x="574.0" y="64" width="126.0" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="637.0" y="101.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Your provider,</text>
+<text x="637.0" y="118.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">one interface</text>
+<rect x="710.0" y="64" width="126.0" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="773.0" y="101.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Model and prompt</text>
+<text x="773.0" y="118.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">versions recorded</text>
+<rect x="900" y="50" width="290" height="120" rx="12" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<rect x="900" y="24" width="116" height="22" rx="5" fill="#eaeef2"/>
+<text x="910" y="35.0" font-size="13" font-weight="500" fill="#424a53" text-anchor="start" dominant-baseline="middle">Your runbooks</text>
+<rect x="914.0" y="64" width="80.7" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="954.3333333333334" y="110.0" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Confluence</text>
+<rect x="1004.7" y="64" width="80.7" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="1045.0" y="110.0" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Markdown</text>
+<rect x="1095.3" y="64" width="80.7" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="1135.6666666666665" y="110.0" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">any prose</text>
+<path d="M705,170 L705,192" fill="none" stroke="#8c959f" stroke-width="2"/>
+<text x="705" y="218.0" font-size="21" font-weight="600" fill="#24292f" text-anchor="middle" dominant-baseline="middle">investigates and drafts fixes</text>
+<path d="M1045,170 L1045,192" fill="none" stroke="#8c959f" stroke-width="2"/>
+<text x="1045" y="218.0" font-size="21" font-weight="600" fill="#24292f" text-anchor="middle" dominant-baseline="middle">learns your runbooks</text>
+<path d="M705,244 L705,290 L1045,290 L1045,244" fill="none" stroke="#8c959f" stroke-width="2"/>
+<path d="M850.0,290 L850.0,436" fill="none" stroke="#8c959f" stroke-width="2" marker-end="url(#arr)"/>
+<rect x="40" y="280" width="340" height="120" rx="12" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<rect x="40" y="254" width="79" height="22" rx="5" fill="#eaeef2"/>
+<text x="50" y="265.0" font-size="13" font-weight="500" fill="#424a53" text-anchor="start" dominant-baseline="middle">Alerting</text>
+<rect x="54.0" y="294" width="151.0" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="129.5" y="340.0" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Alertmanager</text>
+<rect x="215.0" y="294" width="151.0" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="290.5" y="331.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Grafana, Datadog,</text>
+<text x="290.5" y="348.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">CloudWatch (later)</text>
+<rect x="40" y="560" width="340" height="150" rx="12" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<rect x="40" y="534" width="279" height="22" rx="5" fill="#eaeef2"/>
+<text x="50" y="545.0" font-size="13" font-weight="500" fill="#424a53" text-anchor="start" dominant-baseline="middle">Built-in Detectors, in each cluster</text>
+<rect x="54.0" y="574" width="151.0" height="47" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="129.5" y="597.5" font-size="13" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">CrashLoopBackOff</text>
+<rect x="215.0" y="574" width="151.0" height="47" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="290.5" y="597.5" font-size="13" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">OOMKilled</text>
+<rect x="52.0" y="633" width="100.0" height="51" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="102.0" y="658.5" font-size="12.5" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Stuck rollout</text>
+<rect x="160.0" y="633" width="100.0" height="51" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="210.0" y="658.5" font-size="12.5" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">ImagePullBackOff</text>
+<rect x="268.0" y="633" width="100.0" height="51" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="318.0" y="658.5" font-size="12.5" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">FailedScheduling</text>
+<path d="M380,340 L420,340" fill="none" stroke="#8c959f" stroke-width="2"/>
+<text x="430" y="340.0" font-size="21" font-weight="600" fill="#24292f" text-anchor="start" dominant-baseline="middle">alerts to investigate</text>
+<path d="M380,635 L420,635" fill="none" stroke="#8c959f" stroke-width="2"/>
+<text x="430" y="635.0" font-size="21" font-weight="600" fill="#24292f" text-anchor="start" dominant-baseline="middle">failures it spots itself</text>
+<path d="M650,340 L670,340 L670,635 L650,635" fill="none" stroke="#8c959f" stroke-width="2"/>
+<path d="M670,495.0 L696,495.0" fill="none" stroke="#8c959f" stroke-width="2" marker-end="url(#arr)"/>
+<path d="M850.0,590 L850.0,554" fill="none" stroke="#8c959f" stroke-width="2" marker-end="url(#arr)"/>
+<text x="850.0" y="612.0" font-size="21" font-weight="600" fill="#24292f" text-anchor="middle" dominant-baseline="middle">reads evidence, read-only</text>
+<path d="M850.0,636 L850.0,650 L800,650 L800,690" fill="none" stroke="#8c959f" stroke-width="2"/>
+<path d="M850.0,650 L1140,650 L1140,690" fill="none" stroke="#8c959f" stroke-width="2"/>
+<rect x="560" y="690" width="290" height="120" rx="12" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<rect x="560" y="664" width="190" height="22" rx="5" fill="#eaeef2"/>
+<text x="570" y="675.0" font-size="13" font-weight="500" fill="#424a53" text-anchor="start" dominant-baseline="middle">In each cluster: Sensor</text>
+<rect x="574.0" y="704" width="80.7" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="614.3333333333334" y="741.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Kubernetes</text>
+<text x="614.3333333333334" y="758.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">API</text>
+<rect x="664.7" y="704" width="80.7" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="705.0" y="750.0" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Prometheus</text>
+<rect x="755.3" y="704" width="80.7" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="795.6666666666667" y="750.0" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Loki</text>
+<rect x="900" y="690" width="290" height="120" rx="12" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<rect x="900" y="664" width="183" height="22" rx="5" fill="#eaeef2"/>
+<text x="910" y="675.0" font-size="13" font-weight="500" fill="#424a53" text-anchor="start" dominant-baseline="middle">Code and delivery: MCP</text>
+<rect x="914.0" y="704" width="80.7" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="954.3333333333334" y="741.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">GitHub</text>
+<text x="954.3333333333334" y="758.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">code</text>
+<rect x="1004.7" y="704" width="80.7" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="1045.0" y="741.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Pull</text>
+<text x="1045.0" y="758.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">requests</text>
+<rect x="1095.3" y="704" width="80.7" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="1135.6666666666665" y="741.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Actions</text>
+<text x="1135.6666666666665" y="758.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">runs</text>
+<path d="M1000,495.0 L1100,495.0" fill="none" stroke="#8c959f" stroke-width="2"/>
+<path d="M1100,495.0 L1100,340 L1176,340" fill="none" stroke="#8c959f" stroke-width="2" marker-end="url(#arr)"/>
+<path d="M1100,495.0 L1100,610 L1176,610" fill="none" stroke="#8c959f" stroke-width="2" marker-end="url(#arr)"/>
+<rect x="1180" y="280" width="480" height="120" rx="12" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<rect x="1180" y="254" width="279" height="22" rx="5" fill="#eaeef2"/>
+<text x="1190" y="265.0" font-size="13" font-weight="500" fill="#424a53" text-anchor="start" dominant-baseline="middle">Root-cause analysis, in your ticket</text>
+<rect x="1194.0" y="294" width="105.5" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="1246.75" y="340.0" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Root cause</text>
+<rect x="1309.5" y="294" width="105.5" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="1362.25" y="331.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Introduced</text>
+<text x="1362.25" y="348.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">by</text>
+<rect x="1425.0" y="294" width="105.5" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="1477.75" y="331.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Cited</text>
+<text x="1477.75" y="348.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">evidence</text>
+<rect x="1540.5" y="294" width="105.5" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="1593.25" y="340.0" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Confidence</text>
+<text x="1190" y="422.0" font-size="14" font-weight="400" fill="#57606a" text-anchor="start" dominant-baseline="middle">GitHub Issues  ·  ServiceNow</text>
+<rect x="1180" y="550" width="480" height="120" rx="12" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<rect x="1180" y="524" width="257" height="22" rx="5" fill="#eaeef2"/>
+<text x="1190" y="535.0" font-size="13" font-weight="500" fill="#424a53" text-anchor="start" dominant-baseline="middle">Remediation, approved by a human</text>
+<rect x="1194.0" y="564" width="128.0" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="1258.0" y="601.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Advice from</text>
+<text x="1258.0" y="618.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">typed Actions</text>
+<rect x="1356.0" y="564" width="128.0" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="1420.0" y="601.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">A human</text>
+<text x="1420.0" y="618.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">approves it</text>
+<rect x="1518.0" y="564" width="128.0" height="92" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="1582.0" y="601.2" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">Executor</text>
+<text x="1582.0" y="618.8" font-size="14" font-weight="500" fill="#24292f" text-anchor="middle" dominant-baseline="middle">runs the Plan</text>
+<path d="M1327.0,610 L1349.0,610" fill="none" stroke="#8c959f" stroke-width="2" marker-end="url(#arr)"/>
+<path d="M1489.0,610 L1511.0,610" fill="none" stroke="#8c959f" stroke-width="2" marker-end="url(#arr)"/>
+<text x="1190" y="692.0" font-size="14" font-weight="400" fill="#57606a" text-anchor="start" dominant-baseline="middle">Executor: one per cluster, the only writer, never calls an LLM</text>
+</svg>
