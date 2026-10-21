@@ -2,7 +2,7 @@
 
 Status: proposed · Owner: @itsankoff · Last updated: 2026-09-21
 
-This document designs the local environment that incident-copilot is developed, demoed, and evaluated against: a kind cluster, an observability stack, and a small Go service with faults that can be injected on demand. The tasks that build it are milestone M1 in [`docs/roadmap.md`](../roadmap.md).
+This document designs the local environment that incident-copilot is developed, demoed, and evaluated against: a kind cluster, an observability stack, and a small Go service with faults that can be injected on demand.
 
 ## Goals
 

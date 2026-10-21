@@ -2,7 +2,7 @@
 
 ## Where things are
 
-- [`docs/roadmap.md`](docs/roadmap.md): the task plan and current status. Work through it in order, and treat a task's validation list as its definition of done.
+- [GitHub Issues](https://github.com/itsankoff/incident-copilot/issues): the task plan and current status, starting from the [Wayfinder map](https://github.com/itsankoff/incident-copilot/issues/3).
 - [`docs/design/`](docs/design): design docs, one per milestone that needs one.
 - [`docs/adr/`](docs/adr): architecture decision records and the [architecture diagram](docs/adr/arch-diagram.md).
 - [ADR 0003: Safety invariants](docs/adr/0003-trust-model-and-safety-invariants.md#safety-invariants): never weaken these. Relaxing one needs a new ADR that supersedes ADR 0003.
