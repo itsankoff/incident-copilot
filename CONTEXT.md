@@ -36,6 +36,10 @@ _Avoid_: alert, case, issue
 The workload an Incident is about, named by platform, Location, kind, and name (plus namespace where the platform has one) rather than by any one running copy of it; an Incident may have none when no Signal names a workload.
 _Avoid_: resource, pod, service
 
+**Target version**:
+A marker the platform gives a Target that changes whenever someone changes what the Target should be, and not when its running state changes; an Approval pins it, so a Target changed by someone else is never acted on.
+_Avoid_: generation, revision, resourceVersion
+
 **Platform**:
 The kind of runtime a Target runs on, such as Kubernetes, Lambda, or ECS; one Location may host several.
 _Avoid_: provider, cloud, backend
@@ -58,6 +62,14 @@ _Avoid_: tool, tool call, lookup
 One configured place the LLM can read evidence from, such as a Location's Sensor or an MCP server for code, logs, or errors, with its own read-only credential and its own list of allowed tools; each backend is reached through exactly one Evidence source.
 _Avoid_: integration, connector, plugin
 
+**Evidence ref**:
+The reference an Evidence query's answer carries, naming that call and what it read, which a Claim cites to point at the evidence behind it.
+_Avoid_: citation, link, source
+
+**Claim**:
+One statement in an RCA, either observed, citing the Evidence refs it rests on, or inferred, citing the other Claims it follows from; a Claim with no citation is shown as not based on evidence.
+_Avoid_: finding, fact, conclusion
+
 **Sensor relay**:
 The way a Location's Sensor carries the Control plane's calls to an MCP server inside that Location, over the connection the Sensor opened, so the Location's credentials never leave it.
 _Avoid_: proxy, tunnel, bridge
@@ -79,6 +91,18 @@ _Avoid_: suggestion, fix, recommendation
 **Plan**:
 Advice a human has approved: an ordered list of Actions with their arguments, all on the Incident's Target, and the only thing an Executor runs; it carries one Autonomy level for the whole Plan, is data and never a command, and a human may always carry it out by hand instead.
 _Avoid_: proposal, job, script
+
+**Preview**:
+The before and after of what an Action will change on its Target, worked out from the Target's current state and shown to whoever approves the Plan.
+_Avoid_: dry run, diff
+
+**Guardrails**:
+The Control plane's deterministic checks on every RCA and every Advice the LLM writes, before anything leaves the investigation: that each Claim cites real evidence from this Incident and that each step uses an offered Action, valid arguments, and the Incident's own Target; also called Gate 1.
+_Avoid_: policy, filter, validation
+
+**Approval**:
+A human's acceptance of one exact version of Advice, which turns it into a Plan the Executor may run; any edit needs a new Approval, and an unanswered request expires as a denial. Also called Gate 2.
+_Avoid_: sign-off, consent, ack
 
 **Autonomy level**:
 How far a Plan may go on its own: L0 observe, L1 suggest, L2 approve, L3 autonomous.
