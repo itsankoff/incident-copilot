@@ -20,15 +20,15 @@ func (t Target) String() string {
 // Mapping resolves a Target from an Alert's labels. It never walks owners and
 // never guesses: labels that name no workload give no Target.
 type Mapping struct {
-	Platform       string        `json:"platform"`
-	NamespaceLabel string        `json:"namespaceLabel"`
-	Workloads      []WorkloadKey `json:"workloads"` // the first present label wins
+	Platform       string
+	NamespaceLabel string
+	Workloads      []WorkloadKey // the first present label wins
 }
 
 // WorkloadKey is a label whose value names a workload of Kind.
 type WorkloadKey struct {
-	Label string `json:"label"`
-	Kind  string `json:"kind"`
+	Label string
+	Kind  string
 }
 
 // KubePrometheus is the default Mapping, for the labels kube-prometheus rules set.

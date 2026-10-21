@@ -65,15 +65,8 @@ func (l *Log) Append(t time.Time, typ string, incident int64, data any) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e := Entry{Seq: l.seq + 1, Time: t.UTC(), Type: typ, Incident: incident, Data: raw, Prev: l.prev}
-	h, err := hash(e)
-	if err != nil {
-		return err
-	}
-	e.Hash = h
-	line, err := json.Marshal(e)
-	if err != nil {
-		return err
-	}
+	e.Hash = hash(e)
+	line, _ := json.Marshal(e) // as in hash
 	if _, err := l.f.Write(append(line, '\n')); err != nil {
 		return fmt.Errorf("audit %s: %w", typ, err)
 	}
@@ -109,11 +102,7 @@ func verify(r io.Reader) (Entry, error) {
 		}
 		want := e.Hash
 		e.Hash = ""
-		h, err := hash(e)
-		if err != nil {
-			return last, err
-		}
-		if h != want {
+		if hash(e) != want {
 			return last, fmt.Errorf("entry %d: hash mismatch", e.Seq)
 		}
 		e.Hash = want
@@ -126,11 +115,10 @@ func verify(r io.Reader) (Entry, error) {
 }
 
 // hash is the SHA-256 of the entry's JSON without its own hash.
-func hash(e Entry) (string, error) {
-	b, err := json.Marshal(e)
-	if err != nil {
-		return "", err
-	}
+// Marshalling cannot fail: Data is always valid JSON, from json.Marshal or a
+// line that just unmarshalled.
+func hash(e Entry) string {
+	b, _ := json.Marshal(e)
 	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:]), nil
+	return hex.EncodeToString(sum[:])
 }

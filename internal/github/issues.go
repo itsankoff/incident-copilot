@@ -45,11 +45,8 @@ func (g *Issues) Comment(ctx context.Context, ref, body string) error {
 	return nil
 }
 
-func (g *Issues) post(ctx context.Context, path string, in, out any) error {
-	b, err := json.Marshal(in)
-	if err != nil {
-		return err
-	}
+func (g *Issues) post(ctx context.Context, path string, in map[string]string, out any) error {
+	b, _ := json.Marshal(in) // a map of strings always marshals
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.apiURL+path, bytes.NewReader(b))
 	if err != nil {
 		return err

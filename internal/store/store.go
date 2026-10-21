@@ -109,31 +109,35 @@ func (s *Store) OpenIncidents(ctx context.Context) ([]triage.Incident, error) {
 	return out, rows.Err()
 }
 
-// Save writes inc and its members, inserting the Incident when its ID is 0,
-// and returns its ID. before runs inside the same transaction, with that ID,
-// just ahead of the commit; if it fails nothing is saved.
-func (s *Store) Save(ctx context.Context, inc triage.Incident, before func(id int64) error) (id int64, err error) {
+// Tx is one change to the store, committed whole or not at all.
+type Tx struct {
+	tx *sql.Tx
+}
+
+func (s *Store) Begin(ctx context.Context) (*Tx, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	return &Tx{tx: tx}, nil
+}
 
-	id = inc.ID
+func (t *Tx) Commit() error { return t.tx.Commit() }
+
+// Rollback discards the change; after Commit it does nothing.
+func (t *Tx) Rollback() { _ = t.tx.Rollback() }
+
+// Save writes inc and its members, inserting the Incident when its ID is 0,
+// and returns its ID.
+func (t *Tx) Save(ctx context.Context, inc triage.Incident) (int64, error) {
+	id := inc.ID
 	if id == 0 {
 		var target any
 		if inc.Target != nil {
-			b, err := json.Marshal(inc.Target)
-			if err != nil {
-				return 0, err
-			}
+			b, _ := json.Marshal(inc.Target) // a struct of strings always marshals
 			target = string(b)
 		}
-		res, err := tx.ExecContext(ctx, `INSERT INTO incidents (target, key, opened_at) VALUES (?, ?, ?)`,
+		res, err := t.tx.ExecContext(ctx, `INSERT INTO incidents (target, key, opened_at) VALUES (?, ?, ?)`,
 			target, inc.Key, formatTime(inc.OpenedAt))
 		if err != nil {
 			return 0, err
@@ -143,7 +147,7 @@ func (s *Store) Save(ctx context.Context, inc triage.Incident, before func(id in
 		}
 	}
 	for _, m := range inc.Members {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO members (incident_id, key, starts_at, source_kind,
+		if _, err := t.tx.ExecContext(ctx, `INSERT INTO members (incident_id, key, starts_at, source_kind,
 			source_instance, name, severity, link, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (incident_id, key, starts_at) DO UPDATE SET last_seen = excluded.last_seen`,
 			id, m.Key, formatTime(m.StartsAt), m.Source.Kind, m.Source.Instance,
@@ -151,15 +155,12 @@ func (s *Store) Save(ctx context.Context, inc triage.Incident, before func(id in
 			return 0, err
 		}
 	}
-	if err := before(id); err != nil {
-		return 0, err
-	}
-	return id, tx.Commit()
+	return id, nil
 }
 
 // SetTicket records the ticket reference of Incident id.
-func (s *Store) SetTicket(ctx context.Context, id int64, ref string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE incidents SET ticket_ref = ? WHERE id = ?`, ref, id)
+func (t *Tx) SetTicket(ctx context.Context, id int64, ref string) error {
+	_, err := t.tx.ExecContext(ctx, `UPDATE incidents SET ticket_ref = ? WHERE id = ?`, ref, id)
 	return err
 }
 

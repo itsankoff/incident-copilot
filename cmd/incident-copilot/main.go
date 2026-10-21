@@ -10,7 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/signal"
+	ossignal "os/signal"
 	"syscall"
 	"time"
 
@@ -18,6 +18,7 @@ import (
 	"github.com/itsankoff/incident-copilot/internal/audit"
 	"github.com/itsankoff/incident-copilot/internal/controlplane"
 	"github.com/itsankoff/incident-copilot/internal/github"
+	"github.com/itsankoff/incident-copilot/internal/signal"
 	"github.com/itsankoff/incident-copilot/internal/store"
 )
 
@@ -29,17 +30,16 @@ var (
 
 func main() {
 	role := flag.String("role", "", "role: control-plane | sensor | executor")
-	config := flag.String("config", "", "path to the control-plane JSON config file")
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("role", *role, "version", version, "commit", commit)
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := ossignal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	var err error
 	switch *role {
 	case "control-plane":
-		err = runControlPlane(ctx, *config, logger)
+		err = runControlPlane(ctx, logger)
 	case "sensor", "executor":
 		err = fmt.Errorf("role %s: not implemented", *role)
 	default:
@@ -51,13 +51,8 @@ func main() {
 	}
 }
 
-func runControlPlane(ctx context.Context, path string, logger *slog.Logger) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("config: %w", err)
-	}
-	cfg, err := controlplane.ParseConfig(f)
-	_ = f.Close()
+func runControlPlane(ctx context.Context, logger *slog.Logger) error {
+	cfg, err := controlplane.LoadConfig(os.Getenv)
 	if err != nil {
 		return err
 	}
@@ -73,13 +68,13 @@ func runControlPlane(ctx context.Context, path string, logger *slog.Logger) erro
 	}
 	defer func() { _ = log.Close() }()
 
-	tickets := github.New(cfg.GitHub.APIURL, cfg.GitHub.Repo, cfg.GitHub.Token, &http.Client{Timeout: 30 * time.Second})
-	cp := controlplane.New(alertmanager.New(cfg.Sources), st, tickets, log, time.Now)
+	tickets := github.New(cfg.GitHubAPIURL, cfg.GitHubRepo, cfg.GitHubToken, &http.Client{Timeout: 30 * time.Second})
+	cp := controlplane.New(alertmanager.New([]signal.Source{cfg.Alertmanager}), st, tickets, log, time.Now)
 
-	srv := &http.Server{Addr: cfg.Listen, Handler: cp.Handler(), ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Addr: cfg.ListenAddr, Handler: cp.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
-	logger.Info("control plane listening", "addr", cfg.Listen, "sources", len(cfg.Sources), "repo", cfg.GitHub.Repo)
+	logger.Info("control plane listening", "addr", cfg.ListenAddr, "source", cfg.Alertmanager.Instance, "repo", cfg.GitHubRepo)
 
 	select {
 	case err := <-errc:

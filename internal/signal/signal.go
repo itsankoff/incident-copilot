@@ -46,18 +46,20 @@ type Signal struct {
 	Labels      map[string]string `json:"labels"`
 	Annotations map[string]string `json:"annotations,omitempty"` // never reaches the LLM or a ticket
 	Link        string            `json:"link,omitempty"`
-	Target      *Target           `json:"target,omitempty"` // nil when the labels name no workload
+	Target      *Target           `json:"target,omitempty"` // set by Detectors, or resolved by the Control plane from labels; nil when none
 	Raw         json.RawMessage   `json:"raw"`
 }
 
 // Source is one configured sender of Signals.
 type Source struct {
-	Kind     string  `json:"kind"`
-	Instance string  `json:"instance"`
-	Token    string  `json:"token"`
-	Location string  `json:"location"`
-	Mapping  Mapping `json:"mapping"`
+	Kind     string
+	Instance string
+	Token    string
+	Location string
+	Mapping  Mapping
 }
+
+func (s Source) Ref() SourceRef { return SourceRef{Kind: s.Kind, Instance: s.Instance} }
 
 // Adapter turns one kind of Signal source's payload into Signals, after
 // checking that the sender is who it claims to be.

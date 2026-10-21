@@ -146,6 +146,22 @@ make fault F=memory-leak   # inject a fault and watch incident-copilot respond
 make eval                  # run the evaluation harness across all fault scenarios
 ```
 
+## Configuration
+
+`incident-copilot -role control-plane` reads its configuration from environment variables. It serves the Alertmanager webhook at `/webhook/alertmanager`, and Alertmanager must send `Authorization: Bearer <ALERTMANAGER_TOKEN>`. The `sensor` and `executor` roles are not implemented yet.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `LISTEN_ADDR` | `:8080` | HTTP listen address |
+| `STATE_PATH` | `incident-copilot.db` | SQLite file holding Incidents and ticket references |
+| `AUDIT_PATH` | `audit.jsonl` | Hash-chained audit log |
+| `ALERTMANAGER_INSTANCE` | required | Name of the Alertmanager Signal source, the prefix of every Signal key |
+| `ALERTMANAGER_TOKEN` | required | Bearer token that Alertmanager sends |
+| `ALERTMANAGER_LOCATION` | required | Location (cluster name) of every Target resolved from its Alerts |
+| `GITHUB_API_URL` | `https://api.github.com` | GitHub REST API base URL |
+| `GITHUB_REPO` | required | `owner/name` of the repository that gets one issue per Incident |
+| `GITHUB_TOKEN` | required | Token allowed to create issues and comments in `GITHUB_REPO` |
+
 ## Design choices
 
 - **Go, no agent framework.** The LLM loops, tool dispatch, retries, and budgets are plain Go code that can be read and tested.

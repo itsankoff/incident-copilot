@@ -54,6 +54,9 @@ func (f *fakeTickets) Create(_ context.Context, title, body string) (string, err
 func (f *fakeTickets) Comment(_ context.Context, ref, body string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.fail {
+		return errors.New("ticketing down")
+	}
 	f.comments = append(f.comments, comment{ref, body})
 	return nil
 }
@@ -354,6 +357,24 @@ func TestTicketFailureIsRetried(t *testing.T) {
 	h.send(tokenProd, a) // the retry is a repeat notice
 	if len(tickets.created) != 1 {
 		t.Errorf("%d tickets after retry, want 1", len(tickets.created))
+	}
+}
+
+func TestJoinCommentFailureIsRetried(t *testing.T) {
+	tickets := &fakeTickets{}
+	h := newHarness(t, t.TempDir(), tickets)
+	h.send(tokenProd, alert("KubePodCrashLooping", "aaa", orders))
+
+	tickets.fail = true
+	join := alert("KubeDeploymentReplicasMismatch", "bbb", orders)
+	if code := h.post("Bearer "+tokenProd, payload(join)); code != http.StatusInternalServerError {
+		t.Fatalf("status %d, want 500 so Alertmanager retries", code)
+	}
+
+	tickets.fail = false
+	h.send(tokenProd, join)
+	if len(tickets.created) != 1 || len(tickets.comments) != 1 {
+		t.Errorf("after retry: %d tickets, %d comments, want 1 and 1", len(tickets.created), len(tickets.comments))
 	}
 }
 

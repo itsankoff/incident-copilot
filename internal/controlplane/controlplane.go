@@ -51,14 +51,15 @@ func (s *Server) intake(a signal.Adapter) http.HandlerFunc {
 		now := s.now()
 		src, err := a.Authenticate(r)
 		if err != nil {
-			// The presented credential is never recorded.
+			// The presented credential is never recorded. A failed audit write
+			// still answers 401: nothing in the request is processed either way.
 			_ = s.audit.Append(now, "auth.rejected", 0, map[string]string{
 				"path": r.URL.Path, "remote": r.RemoteAddr, "reason": err.Error(),
 			})
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		ref := signal.SourceRef{Kind: src.Kind, Instance: src.Instance}
+		ref := src.Ref()
 
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -83,8 +84,10 @@ func (s *Server) intake(a signal.Adapter) http.HandlerFunc {
 				}
 				continue
 			}
+			// The Control plane resolves an Alert's Target from its labels (ADR 0002 D4).
+			sig.Target = src.Mapping.Resolve(src.Location, sig.Labels)
 			if err := s.ingest(ctx, sig, now); err != nil {
-				// A retry is only a repeat notice, so the source may safely re-send.
+				// The failed Signal was rolled back, so the source may safely re-send.
 				http.Error(w, "internal error", http.StatusInternalServerError)
 				return
 			}
@@ -106,39 +109,53 @@ func (s *Server) ingest(ctx context.Context, sig signal.Signal, now time.Time) e
 	if d.Reason != "" {
 		decision["reason"] = d.Reason
 	}
-	auditBoth := func(id int64) error {
-		if err := s.audit.Append(now, "signal.received", id, sig); err != nil {
-			return err
-		}
-		return s.audit.Append(now, "triage.decision", id, decision)
-	}
 	if d.Kind == triage.Drop {
-		return auditBoth(0)
+		return s.auditDecision(sig, decision, 0, now)
 	}
 
+	// One transaction per Signal: if the ticket write fails, nothing is stored,
+	// and the source's retry makes the same decision again.
+	tx, err := s.store.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	inc := d.Incident
-	if inc.ID, err = s.store.Save(ctx, inc, auditBoth); err != nil {
+	if inc.ID, err = tx.Save(ctx, inc); err != nil {
+		return err
+	}
+	if err := s.auditDecision(sig, decision, inc.ID, now); err != nil {
 		return err
 	}
 
-	switch {
-	case inc.TicketRef == "":
-		// Also reached when an earlier attempt failed to create the ticket.
+	switch d.Kind {
+	case triage.Open:
 		ref, err := s.tickets.Create(ctx, title(inc), body(inc))
 		if err != nil {
 			return err
 		}
-		if err := s.store.SetTicket(ctx, inc.ID, ref); err != nil {
+		if err := tx.SetTicket(ctx, inc.ID, ref); err != nil {
 			return err
 		}
-		return s.audit.Append(now, "ticket.created", inc.ID, map[string]string{"ref": ref})
-	case d.Kind == triage.Join:
-		if err := s.tickets.Comment(ctx, inc.TicketRef, "Signal joined: "+line(d.Member)); err != nil {
+		if err := s.audit.Append(now, "ticket.created", inc.ID, map[string]string{"ref": ref}); err != nil {
 			return err
 		}
-		return s.audit.Append(now, "ticket.commented", inc.ID, map[string]string{"ref": inc.TicketRef, "key": d.Member.Key})
+	case triage.Join:
+		if err := s.tickets.Comment(ctx, inc.TicketRef, "Signal joined: "+memberLine(d.Member)); err != nil {
+			return err
+		}
+		if err := s.audit.Append(now, "ticket.commented", inc.ID, map[string]string{"ref": inc.TicketRef, "key": d.Member.Key}); err != nil {
+			return err
+		}
 	}
-	return nil
+	return tx.Commit()
+}
+
+func (s *Server) auditDecision(sig signal.Signal, decision map[string]any, incident int64, now time.Time) error {
+	if err := s.audit.Append(now, "signal.received", incident, sig); err != nil {
+		return err
+	}
+	return s.audit.Append(now, "triage.decision", incident, decision)
 }
 
 // The ticket shows identifiers only, never Alert annotations.
@@ -159,13 +176,13 @@ func body(inc triage.Incident) string {
 	}
 	b.WriteString("**Signals:**\n\n")
 	for _, m := range inc.Members {
-		b.WriteString("- " + line(m) + "\n")
+		b.WriteString("- " + memberLine(m) + "\n")
 	}
 	fmt.Fprintf(&b, "\nincident-copilot Incident %d\n", inc.ID)
 	return b.String()
 }
 
-func line(m triage.Member) string {
+func memberLine(m triage.Member) string {
 	s := fmt.Sprintf("`%s` · %s · started %s · from %s/%s", m.Name, m.Severity, m.StartsAt.UTC().Format(time.RFC3339), m.Source.Kind, m.Source.Instance)
 	if m.Link != "" {
 		s += " · [source](" + m.Link + ")"

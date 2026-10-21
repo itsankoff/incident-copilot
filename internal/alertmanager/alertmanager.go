@@ -82,7 +82,7 @@ func (a *Adapter) Map(src signal.Source, raw json.RawMessage, now time.Time) (si
 	}
 
 	s := signal.Signal{
-		Source:      signal.SourceRef{Kind: src.Kind, Instance: src.Instance},
+		Source:      src.Ref(),
 		Key:         src.Instance + "/" + al.Fingerprint,
 		Name:        name,
 		Status:      status,
@@ -93,10 +93,9 @@ func (a *Adapter) Map(src signal.Source, raw json.RawMessage, now time.Time) (si
 		Labels:      al.Labels,
 		Annotations: al.Annotations,
 		Link:        al.GeneratorURL,
-		Target:      src.Mapping.Resolve(src.Location, al.Labels),
 		Raw:         raw,
 	}
-	switch sev := signal.Severity(s.SeverityRaw); sev {
+	switch sev := signal.Severity(strings.ToLower(s.SeverityRaw)); sev {
 	case signal.Critical, signal.Warning, signal.Info:
 		s.Severity = sev
 	default:
