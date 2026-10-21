@@ -24,8 +24,10 @@ profile.cov
 go.work
 go.work.sum
 
-# env file
+# env files (.env.demo.example is the committed template)
 .env
+.env.demo
+.envrc
 
 # Editor/IDE
 # .idea/

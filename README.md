@@ -146,6 +146,26 @@ make fault F=memory-leak   # inject a fault and watch incident-copilot respond
 make eval                  # run the evaluation harness across all fault scenarios
 ```
 
+## Configuration
+
+`incident-copilot -role control-plane` reads its configuration from environment variables. It serves the Alertmanager webhook at `/webhook/alertmanager`, and Alertmanager must send `Authorization: Bearer <IC_ALERTMANAGER_TOKEN>`. The `sensor` and `executor` roles are not implemented yet.
+
+For local runs, copy [`.env.demo.example`](.env.demo.example) to `.env.demo`, which is gitignored, and fill in the secrets.
+
+To check the whole path against a real GitHub repository, follow the manual test in [`docs/manual-tests/github-issues.md`](docs/manual-tests/github-issues.md).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `IC_LISTEN_ADDR` | `:8080` | HTTP listen address |
+| `IC_STATE_PATH` | `incident-copilot.db` | SQLite file holding Incidents and ticket references |
+| `IC_AUDIT_PATH` | `audit.jsonl` | Hash-chained audit log |
+| `IC_ALERTMANAGER_INSTANCE` | required | Name of the Alertmanager Signal source, the prefix of every Signal key |
+| `IC_ALERTMANAGER_TOKEN` | required | Bearer token that Alertmanager sends |
+| `IC_ALERTMANAGER_LOCATION` | required | Location (cluster name) of every Target resolved from its Alerts |
+| `IC_GITHUB_API_URL` | `https://api.github.com` | GitHub REST API base URL |
+| `IC_GITHUB_REPO` | required | `owner/name` of the repository that gets one issue per Incident |
+| `IC_GITHUB_TOKEN` | required | Token allowed to create issues and comments in `IC_GITHUB_REPO` |
+
 ## Design choices
 
 - **Go, no agent framework.** The LLM loops, tool dispatch, retries, and budgets are plain Go code that can be read and tested.
