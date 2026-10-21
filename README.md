@@ -1,8 +1,8 @@
 # incident-copilot
 
-**An autonomous incident responder for Kubernetes platforms.** incident-copilot receives an alert, investigates it with real observability and delivery tools, writes a structured root-cause analysis into your ticketing system, and proposes a remediation from an allowlist that runs only as far as its autonomy level permits.
+**A self-hosted incident copilot for Kubernetes.** incident-copilot takes in alerts from your existing monitoring and the failures its own Detectors spot, investigates them with read-only tools, and writes a root-cause analysis into your ticketing system in which every claim cites its evidence. It then drafts a fix built only from typed, allowlisted Actions, and a human approves that exact fix before anything runs.
 
-It is written in Go, calls LLM APIs directly with tool calling (no agent framework), investigates with typed, read-only tools of its own, and ships with an evaluation harness that measures how often the agent gets the diagnosis right.
+It is written in Go, calls LLM APIs directly with tool calling (no agent framework), and ships with an evaluation harness that measures how often the diagnosis is right. Kubernetes is the first platform. Managed Kubernetes (EKS, GKE, AKS) comes next.
 
 > **Status:** early development. The design below is the target; see [Roadmap](#roadmap) for what is implemented.
 
@@ -12,113 +12,121 @@ It is written in Go, calls LLM APIs directly with tool calling (no agent framewo
 
 When an alert fires at 3 a.m., the on-call engineer's first 20 minutes are spent on the same questions: *What is broken? Since when? What changed?* Answering them means jumping between dashboards, log queries, `kubectl`, and the deploy history.
 
-incident-copilot does that first pass automatically. It correlates **metrics, logs, Kubernetes events, and source-code changes** into one line of reasoning and hands the engineer a ticket with evidence, a suspected cause, a confidence level, and a ready-to-approve fix.
+incident-copilot does that first pass automatically. It correlates **metrics, logs, Kubernetes events, rollouts, and code changes** into one line of reasoning and hands the engineer a ticket with cited evidence, a suspected cause, a confidence level, and a fix ready for review, including for incidents nobody wrote a runbook for.
 
 It is built for environments where an AI touching production must be **controlled and auditable**:
 
-- Remediations are limited to an allowlist of runbooks.
-- Every runbook has an explicit autonomy level.
-- Every tool call, LLM decision, and approval is written to an append-only audit log.
+- The LLM never holds write credentials. A separate Executor, which never calls an LLM, is the only component that changes anything.
+- Fixes are made only of typed Actions the Executor offers, aimed only at the workload the incident is about.
+- A human approves every fix, as the exact version that will run.
+- Every Signal, tool call, LLM request and response, approval, and step is written to a hash-chained audit log.
 
 ## How it works
 
 ```mermaid
 flowchart LR
-    AM[Alertmanager] -- webhook --> AG[Agent loop]
-    AG <-- tool calls --> TOOLS[Investigation tools]
-    TOOLS --> PROM[(Prometheus)]
-    TOOLS --> LOKI[(Loki)]
-    TOOLS --> K8S[(Kubernetes API)]
-    TOOLS --> GH[(GitHub API)]
-    AG <--> LLM[LLM provider<br/>Azure OpenAI / others]
-    AG -- RCA --> TKT[Ticketing<br/>ServiceNow / GitHub Issues]
-    AG -- proposal --> EX[Executor<br/>no LLM]
-    EX --> GATE{Approval gate}
-    TKT -- approval --> GATE
-    CH[Slack / approval link<br/>via email or push] -- approval --> GATE
-    GATE --> K8S
-    AG -.-> AUDIT[(Append-only audit log)]
-    EX -.-> AUDIT
+    AM[Alertmanager] -- authenticated webhook --> CP
+    subgraph CP[Control plane]
+        TR[Triage] --> RCA[RCA loop] --> REM[Remediation loop]
+    end
+    CP <--> LLM[LLM provider]
+    CP -- RCA, Advice --> TKT[Ticketing<br/>GitHub Issues / ServiceNow]
+    H[Human] -- reviews, edits, approves --> CP
+    subgraph LOC[Each cluster]
+        SEN[Sensor<br/>read-only]
+        EX[Executor<br/>the only writer]
+    end
+    SEN -. Detector Signals, evidence .-> CP
+    CP -. approved Plan, one step at a time .-> EX
+    EX --> K8S[(Kubernetes API)]
 ```
 
-1. **Trigger.** Alertmanager sends a webhook to the agent when an alert fires.
-2. **Investigate.** The agent runs a tool-calling loop against the LLM and collects evidence until it can explain the alert or runs out of budget.
-3. **Report.** It opens an incident with a structured RCA.
-4. **Remediate.** It proposes one runbook from the allowlist. Depending on the runbook's autonomy level, the runbook is only suggested, waits for approval, or runs on its own.
-5. **Record.** Every step is written to the audit log.
+1. **Signal.** An alert from your monitoring, or a built-in Detector in the cluster, becomes a Signal.
+2. **Triage.** Deterministic code joins Signals about the same workload into one Incident with one ticket.
+3. **Investigate.** The RCA loop gathers evidence with read-only tools until it can explain the Incident or runs out of budget, and writes an RCA in which every claim cites the tool call behind it.
+4. **Advise.** The remediation loop drafts Advice: steps built from the Executor's Actions, informed by any Runbooks you imported for that alert or workload.
+5. **Approve.** A human reviews the Advice, may edit it, and approves it. The approved version is a Plan.
+6. **Execute and verify.** The Executor runs the Plan one step at a time and checks each step. incident-copilot then checks that the alert resolves. Anything else escalates to a human.
 
-Component boundaries are described in [`docs/adr/arch-diagram.md`](docs/adr/arch-diagram.md).
+One central **Control plane** runs the LLM and serves many clusters. Each cluster gets a read-only **Sensor** and an **Executor**, both dialing out, so nothing has to reach into your clusters. Component boundaries are in [`docs/adr/arch-diagram.md`](docs/adr/arch-diagram.md), and the decisions behind them in [ADR 0002: Product scope and platform seams](docs/adr/0002-product-scope-and-platform-seams.md).
 
-### Investigation tools
+### Signals
 
-The tools are typed and scoped to the alerting workload's location. The model never writes raw PromQL or LogQL and never gets a shell. Each result is redacted and size-capped before it reaches the LLM. Vendor MCP servers (CloudWatch, Azure Monitor, Datadog) can be plugged in later as an MCP client, behind an explicit tool allowlist and the same redaction and budgets. incident-copilot does not serve its tools over MCP to other agents, because that would bypass its audit log, scope checks, and budgets.
+- **Alerts** from Alertmanager. Every sender must authenticate. More sources (Grafana, Datadog, CloudWatch, Azure Monitor) come later. incident-copilot locates the affected workload from the alert's labels; it never guesses.
+- **Detectors** run in the Sensor and read only the Kubernetes API, so they work in clusters with no alert rules: CrashLoopBackOff, OOMKilled, stuck rollout, ImagePullBackOff, and FailedScheduling.
 
-| Tool | Source | Answers |
+### Investigation
+
+The LLM investigates with read-only tools and never gets a shell. Results are redacted and size-capped where they are fetched and again before they reach the LLM, and only identifiers from the alert reach the LLM, never its free text.
+
+| Evidence source | Route | Answers |
 |---|---|---|
-| `query_metrics` | Prometheus (PromQL) | What do error rate, latency, memory, and restarts look like? |
-| `search_logs` | Loki (LogQL) | What is the service saying? |
-| `get_k8s_events` | Kubernetes API | Were there OOMKills, failed probes, or scheduling issues? |
-| `describe_pod` | Kubernetes API | What are the pod's status, resources, and container state? |
-| `recent_deployments` | Kubernetes / GitHub API | What was rolled out, and when? |
-| `get_commit_diff` | GitHub API | What exactly changed in the code or config? |
+| Kubernetes API, Prometheus, Loki | Sensor tools in the cluster: `metrics`, `logs`, `events`, `workload_state`, `changes`, `list_workloads` | What do errors, latency, memory, and restarts look like? What is the service saying? What was rolled out, and when? |
+| GitHub | GitHub MCP server, through incident-copilot's own MCP client | What exactly changed in the code, config, or CI? |
+
+MCP servers are always called through incident-copilot's own client, behind read-only credentials and a tool allowlist, and their output passes through the same redaction and budgets. incident-copilot does not serve its tools over MCP to other agents, because that would bypass its audit log, scope checks, and budgets.
 
 ### Root-cause analysis
 
-Every incident ticket follows the same structure:
-
 | Field | Content |
 |---|---|
-| **Summary** | One or two sentences on what is happening and who is affected |
-| **Evidence** | The queries run and what they returned, with links |
-| **Suspected cause** | The most likely root cause, tied to the evidence |
-| **Confidence** | `low` / `medium` / `high`, with the reason |
-| **Proposed action** | A runbook from the allowlist, with parameters |
+| **Summary** | What is happening and who is affected |
+| **Started at** | When the problem began |
+| **Introduced by** | The rollout, commit, config change, or image that caused it, or "none found" |
+| **Impact** | What is affected |
+| **Confidence** | `low` / `medium` / `high` |
+| **Evidence ledger** | What is affected, what was checked and is healthy, what changed for another reason, and what was not checked |
+| **Gaps** | Sources that were unavailable |
 
-Ticketing is behind an adapter interface. **ServiceNow** is the primary adapter and **GitHub Issues** is the fallback.
+Every field is made of claims that cite the tool calls behind them. A claim with no evidence is labelled as such, and it caps the confidence at `low`. Ticketing is behind an adapter interface, with **GitHub Issues** and **ServiceNow** adapters.
 
 ## Trust model
 
-Remediation is where an AI agent can do real damage, so it is the most constrained part of the system. **The model proposes, and deterministic code decides.**
+Remediation is where an AI can do real damage, so it is the most constrained part of the system. **The model drafts, deterministic code checks, and a human approves.**
 
-- **Allowlisted runbooks.** The agent cannot run arbitrary commands. It chooses from a fixed set of typed runbooks: `rollback_deployment`, `restart_pod`, and `scale_up`.
-- **Autonomy levels.** Each runbook has a maximum level, and each environment a ceiling, for example L3 in staging and L2 in production. Nothing the model says can raise them.
+- **Typed Actions only.** Advice is made only of Actions the Executor offers, such as `rollback_deployment`, `restart_pod`, and `scale_up`, with arguments checked against each Action's schema. No shell, no scripts.
+- **Bound to the Incident's workload.** Every step targets the workload the Incident is about, as found from the Signal, never from the model's output.
+- **Guardrails, then approval.** Code checks every RCA and every piece of Advice before a human sees it. A human then approves the exact version that will run; editing it needs a new approval, and silence counts as no.
+- **Autonomy levels.** A Plan's level is the lowest of its Environment's ceiling, a kill switch, the RCA's confidence, and the guard checks. Nothing the model says can raise it. This version stops at L2.
 
   | Level | Name | Behaviour |
   |---|---|---|
-  | **L0** | Observe | Record the proposal in the audit log only. |
-  | **L1** | Suggest | Propose the runbook in the ticket. A human carries it out. |
-  | **L2** | Approve | Execute after one authorised human approves that exact action (ticket, Slack, or an approval link sent by email or push). |
-  | **L3** | Autonomous | Execute immediately and report straight away. |
+  | **L0** | Observe | Record the Plan in the audit log only. |
+  | **L1** | Suggest | Show the Plan in the ticket. A human carries it out. |
+  | **L2** | Approve | The Executor runs the Plan after a human approves that exact version. |
+  | **L3** | Autonomous | Not available in this version. |
 
-- **Read and write are separated.** The agent only reads. A separate executor, which never calls an LLM, is the only component allowed to change the cluster.
-- **Audit log.** Every alert, tool call, LLM request and response, proposal, approval, and execution result is appended to a hash-chained log before the action it describes. Any incident can be reconstructed from it.
+- **Read and write are separated.** The Control plane and Sensors only read. The Executor in each cluster is the only writer, uses only that cluster's credentials, and never calls an LLM.
+- **No retries, no automatic rollback.** A failed step, a changed workload, or an alert that does not resolve escalates to a human.
+- **Audit log.** Written before every step. A failed audit write blocks the step. Any Incident can be reconstructed from it.
 
-The full design, the safety invariants, and the reasoning behind them are in [ADR 0001: Autonomy and trust model](docs/adr/0001-autonomy-and-trust-model.md).
+The trust model and the canonical safety invariants are in [ADR 0003: Trust model and safety invariants](docs/adr/0003-trust-model-and-safety-invariants.md).
 
 ## Evaluation harness
 
-A demo that works once proves little. The harness measures how reliable the agent is.
+A demo that works once proves little. The harness measures how reliable incident-copilot is.
 
 For each fault scenario it:
 
 1. injects the fault into the demo service,
-2. waits for the alert and lets the agent run to completion,
+2. waits for the alert and lets incident-copilot run to completion,
 3. scores the result against the known ground truth.
 
 It reports, per scenario and overall:
 
-- **Diagnosis accuracy:** did the agent name the correct root cause?
-- **Remediation accuracy:** did it pick the correct runbook?
+- **Diagnosis accuracy:** did the RCA name the correct root cause?
+- **Remediation accuracy:** did the Advice use the correct Actions?
+- **Unsafe action rate:** how often a Plan would have done the wrong thing.
 - **Time to diagnosis:** from the alert firing to the RCA being written.
 - **Token cost per incident.**
 
-This makes prompt, model, and tool changes measurable rather than a matter of impression.
+Every investigation records its model, prompt, and Runbook versions, so it can be replayed against its recorded tool results with a new model or prompt. This makes prompt, model, and tool changes measurable rather than a matter of impression.
 
 ## Demo environment
 
 A local [kind](https://kind.sigs.k8s.io) cluster runs a small Go service alongside Prometheus, Loki, and Alertmanager. The service has injectable faults that cover the common categories of real incidents:
 
-| Fault | Symptom | Expected runbook |
+| Fault | Symptom | Expected remediation |
 |---|---|---|
 | Memory leak | Rising memory, OOMKills | `restart_pod` / `scale_up` |
 | Bad config deploy | Error spike right after a rollout | `rollback_deployment` |
@@ -131,8 +139,6 @@ A local [kind](https://kind.sigs.k8s.io) cluster runs a small Go service alongsi
 
 - Go 1.25+
 - Docker (4 CPUs and 8 GB of memory allocated), [kind](https://kind.sigs.k8s.io), `kubectl`, and [Helm](https://helm.sh) (on macOS: `brew install go kind kubectl helm`)
-- An LLM provider API key (Azure OpenAI by default)
-- Optional: a ServiceNow instance (a free Personal Developer Instance is enough) or a GitHub token for the Issues adapter
 
 ### Run it
 
@@ -152,32 +158,18 @@ make down         # tear everything down
 Planned, not implemented yet:
 
 ```sh
-make fault F=memory-leak   # inject a fault and watch the agent respond
+make fault F=memory-leak   # inject a fault and watch incident-copilot respond
 make eval                  # run the evaluation harness across all fault scenarios
 ```
 
-### Configuration
-
-Configuration is read from environment variables (a `.env` file is supported for local use):
-
-| Variable | Description |
-|---|---|
-| `LLM_PROVIDER` | `azure-openai` (default), `openai`, `anthropic` |
-| `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_API_KEY` / `AZURE_OPENAI_DEPLOYMENT` | Azure OpenAI settings |
-| `PROMETHEUS_URL` / `LOKI_URL` | Observability backends |
-| `GITHUB_TOKEN` / `GITHUB_REPO` | Deployment history, commit diffs, and the Issues adapter |
-| `TICKETING` | `servicenow` (default) or `github` |
-| `SERVICENOW_INSTANCE` / `SERVICENOW_USER` / `SERVICENOW_PASSWORD` | ServiceNow adapter |
-| `SLACK_BOT_TOKEN` | Optional, for approval buttons |
-| `AUDIT_LOG_PATH` | Where the append-only audit log is written |
-
 ## Design choices
 
-- **Go, no agent framework.** The orchestration loop, tool dispatch, retries, and budgets are plain Go code that can be read and tested.
-- **Typed tools, MCP as a client only.** Investigation tools are typed, read-only queries rather than raw query languages or a shell. MCP is used only to consume vendor servers, behind an allowlist, redaction, and byte budgets.
-- **Pluggable LLM provider.** A small provider interface. Azure OpenAI is the default, and other providers are drop-in.
-- **Adapters for ticketing and approval.** ServiceNow, GitHub Issues, and Slack sit behind interfaces, so adding Jira or PagerDuty does not touch the agent.
-- **Safety before autonomy.** Allowlists, autonomy levels, and the audit log are core parts of the system, not add-ons.
+- **Go, no agent framework.** The LLM loops, tool dispatch, retries, and budgets are plain Go code that can be read and tested.
+- **Deciding is core, platforms are plug-ins at compile time.** Triage, the LLM loops, guardrails, approvals, and the audit log never import platform code. Detectors, evidence tools, and Actions sit behind interfaces, with Kubernetes the first implementation.
+- **MCP as a client only.** Existing MCP servers are preferred as evidence sources, always called through incident-copilot's own client with read-only credentials, a tool allowlist, redaction, and byte budgets.
+- **Pluggable LLM provider.** A small provider interface, with no vendor SDK types outside it.
+- **Adapters for Signal sources and ticketing.** Alertmanager, GitHub Issues, and ServiceNow sit behind interfaces, so adding a source or a ticketing system does not touch the core.
+- **Safety before autonomy.** Typed Actions, scope binding, approvals, and the audit log are core parts of the system, not add-ons.
 
 ## Roadmap
 
