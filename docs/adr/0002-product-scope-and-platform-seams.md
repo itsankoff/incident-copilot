@@ -100,7 +100,9 @@ A **Signal** is one source-neutral struct, not an interface. What varies is the 
 
 ### D5. Built-in Kubernetes Detectors
 
-Five Detectors run in every Sensor, read only the Kubernetes API (watches on Pods, Deployments, and Events, never Prometheus or kube-state-metrics, because they exist for clusters with no alert rules), and emit one Signal per (Detector, Target), never per pod. *Live pods* are the Target's pods that currently exist.
+A Detector is a rule; the Sensor is the component that runs a Location's Detectors, as the Executor runs its Actions.
+
+Five Detectors run in every Sensor in a Kubernetes Location, read only the Kubernetes API (watches on Pods, Deployments, and Events, never Prometheus or kube-state-metrics, because they exist for clusters with no alert rules), and emit one Signal per (Detector, Target), never per pod. *Live pods* are the Target's pods that currently exist.
 
 | Detector | Fires | Resolves | Severity |
 |---|---|---|---|
@@ -110,9 +112,9 @@ Five Detectors run in every Sensor, read only the Kubernetes API (watches on Pod
 | ImagePullBackOff | a live container has been waiting `ImagePullBackOff` or `ErrImagePull` for ≥ 2 min | none in either state for 1 min | warning |
 | FailedScheduling | a live pod has had `PodScheduled=False`, reason `Unschedulable`, for ≥ 5 min | no live pod unschedulable for 1 min | warning |
 
-- **Target.** The Sensor follows controller owners to the top one, whatever its kind (Deployment, StatefulSet, DaemonSet, CronJob, a bare Job or ReplicaSet, an Argo `Rollout`, an operator CRD, or a Pod with no owner).
-- **Liveness.** The Sensor re-sends each firing Signal every 5 minutes, so a dead Sensor's Signals expire after 10 minutes instead of hanging open.
-- **Restarts.** On start the Sensor lists current state and rebuilds which Signals are firing. A restart can delay a resolution but never fake one. OOMKilled counts only terminations within the last 15 minutes.
+- **Target.** Each Detector resolves its Target by following controller owners to the top one, whatever its kind (Deployment, StatefulSet, DaemonSet, CronJob, a bare Job or ReplicaSet, an Argo `Rollout`, an operator CRD, or a Pod with no owner).
+- **Liveness.** The Sensor re-sends every firing Detector Signal every 5 minutes, so a dead Sensor's Detector Signals expire after 10 minutes instead of hanging open.
+- **Restarts.** On start each Detector lists current state and rebuilds which of its Signals are firing. A restart can delay a resolution but never fake one. OOMKilled counts only terminations within the last 15 minutes.
 - **Alongside Alerts.** Detectors always run, even when an equivalent alert rule exists. Triage merges them by Target. Known gap: a pod-only Alert gets no Target, so it and the matching Detector Signal become two Incidents.
 - **Defaults.** Every Detector is on across the Sensor's namespace allowlist and can be turned off. No thresholds are tunable in v1.
 - **Accepted limitation.** OOMKilled "resolved" means only "no OOM for 15 minutes". A slow leak will OOM again and reopen the Incident (or open a recurrence).
