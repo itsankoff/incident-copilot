@@ -152,6 +152,8 @@ make eval                  # run the evaluation harness across all fault scenari
 
 For local runs, copy [`.env.demo.example`](.env.demo.example) to `.env.demo`, which is gitignored, and fill in the secrets.
 
+To check the whole path against a real GitHub repository, follow the manual test in [`docs/manual-tests/github-issues.md`](docs/manual-tests/github-issues.md).
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `IC_LISTEN_ADDR` | `:8080` | HTTP listen address |
