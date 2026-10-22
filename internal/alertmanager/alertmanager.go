@@ -1,6 +1,7 @@
 // Package alertmanager is the Source adapter for Prometheus Alertmanager's
-// webhook receiver. Each configured Alertmanager has its own bearer token,
-// which also tells the adapter which Signal source sent a request.
+// webhook receiver. Each configured Alertmanager has its own bearer token (two
+// during rotation), which also tells the adapter which Signal source sent a
+// request.
 package alertmanager
 
 import (
@@ -23,29 +24,33 @@ func New(sources []signal.Source) *Adapter {
 	return &Adapter{sources: sources}
 }
 
-// Authenticate matches the request's bearer token against every source's token.
+// Authenticate matches the request's bearer token against every source's tokens.
 func (a *Adapter) Authenticate(r *http.Request) (signal.Source, error) {
 	tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !ok || tok == "" {
 		return signal.Source{}, errors.New("missing bearer token")
 	}
 	for _, s := range a.sources {
-		if s.Token != "" && subtle.ConstantTimeCompare([]byte(tok), []byte(s.Token)) == 1 {
-			return s, nil
+		for _, want := range s.Tokens {
+			if want != "" && subtle.ConstantTimeCompare([]byte(tok), []byte(want)) == 1 {
+				return s, nil
+			}
 		}
 	}
 	return signal.Source{}, errors.New("unknown bearer token")
 }
 
-// Split returns the alerts of one webhook payload.
-func (a *Adapter) Split(body []byte) ([]json.RawMessage, error) {
+// Split returns the alerts of one webhook payload, and its truncatedAlerts:
+// how many alerts the receiver's max_alerts left out.
+func (a *Adapter) Split(body []byte) ([]json.RawMessage, int, error) {
 	var p struct {
-		Alerts []json.RawMessage `json:"alerts"`
+		Alerts          []json.RawMessage `json:"alerts"`
+		TruncatedAlerts int               `json:"truncatedAlerts"`
 	}
 	if err := json.Unmarshal(body, &p); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return p.Alerts, nil
+	return p.Alerts, p.TruncatedAlerts, nil
 }
 
 type amAlert struct {
