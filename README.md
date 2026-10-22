@@ -156,9 +156,9 @@ To check the whole path against a real GitHub repository, follow the manual test
 
 ### Alertmanager route
 
-Copy the route and receiver in [`deploy/alertmanager/incident-copilot.yaml`](deploy/alertmanager/incident-copilot.yaml) into your Alertmanager configuration, and set the URL and the token file. Its timers keep paired alerts inside the settle window and re-send firing alerts every 5 minutes, which Signal liveness relies on. The file explains each setting. Alertmanager HA pairs need no extra setup: both members send the same key, so the second notice is a repeat.
+Copy the route and receiver in [`deploy/alertmanager/incident-copilot.yaml`](deploy/alertmanager/incident-copilot.yaml) into your Alertmanager configuration, and set the URL and the token file. Its timers keep paired alerts inside the settle window and re-send firing alerts every 5 minutes, which Signal liveness relies on. The file explains each setting. For an Alertmanager HA pair, give both members the same token, so they are one Signal source and send the same key. The second notice is then a repeat.
 
-The demo cluster's Alertmanager uses the same route. It sends to a Control plane running on your machine at `http://host.docker.internal:8080` with the token `demo-alertmanager-token`. To use another token, run `make observability IC_ALERTMANAGER_TOKEN=<token>`. To see Alerts arrive, start the Control plane with `IC_ALERTMANAGER_TOKEN=demo-alertmanager-token` and the default `IC_LISTEN_ADDR`.
+The demo cluster's Alertmanager uses the same route. It sends to a Control plane running on your machine at `http://host.docker.internal:8080` with the token `demo-alertmanager-token`. To use another token, run `make observability IC_ALERTMANAGER_TOKEN=<token>`. To see Alerts arrive, start the Control plane with `IC_ALERTMANAGER_TOKEN=demo-alertmanager-token` and the default `IC_LISTEN_ADDR`. `host.docker.internal` resolves on Docker Desktop (macOS, Windows). On Linux it does not resolve inside kind; the two-cluster demo (#73) removes the host from the path.
 
 ### Ingest bounds
 
