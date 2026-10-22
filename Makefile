@@ -18,6 +18,9 @@ IMAGE   := demo-svc:$(VERSION)
 
 # Setting up grafana during make observability (0 disables it)
 GRAFANA ?= 1
+# The bearer token the demo Alertmanager sends; start the Control plane with
+# the same IC_ALERTMANAGER_TOKEN. Local demo only: set your own to override.
+IC_ALERTMANAGER_TOKEN ?= demo-alertmanager-token
 OBS_DIR := deploy/observability
 
 ##@ Development
@@ -78,6 +81,9 @@ observability: ## Install or upgrade Prometheus, Alertmanager, Loki, and Alloy
 	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update >/dev/null
 	helm repo add grafana https://grafana.github.io/helm-charts --force-update >/dev/null
 	helm repo update prometheus-community grafana >/dev/null
+	$(KUBECTL) create namespace monitoring --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	$(KUBECTL) -n monitoring create secret generic incident-copilot-webhook \
+	  --from-literal=token='$(IC_ALERTMANAGER_TOKEN)' --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	$(HELM) upgrade --install kps prometheus-community/kube-prometheus-stack \
 	  --version $(KPS_CHART_VERSION) -n monitoring --create-namespace \
 	  -f $(OBS_DIR)/kube-prometheus-stack.yaml \

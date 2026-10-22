@@ -1,0 +1,30 @@
+# The Alertmanager route and receiver incident-copilot ships (ADR 0002 D3).
+# Copy both into your alertmanager.yml, then set the URL to your Control
+# plane and the credentials file to one holding IC_ALERTMANAGER_TOKEN.
+#
+# - group_by ['...'] gives every alert its own group, so a group's timers
+#   never hold one alert back behind another.
+# - group_wait 10s and group_interval 1m deliver paired alerts inside the
+#   settle window.
+# - repeat_interval 5m is the liveness contract: a firing alert not re-sent
+#   for 10 minutes expires, so the default 4h would leave a dead route's
+#   Signals open for hours.
+# - max_alerts 0 sends every alert; the Control plane caps the body at 1 MiB.
+# - send_resolved: only a resolved notice verifies a fix.
+route:
+  receiver: incident-copilot
+  group_by: ['...']
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 5m
+
+receivers:
+  - name: incident-copilot
+    webhook_configs:
+      - url: https://incident-copilot.example.com/webhook/alertmanager
+        send_resolved: true
+        max_alerts: 0
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /etc/alertmanager/secrets/incident-copilot-webhook/token

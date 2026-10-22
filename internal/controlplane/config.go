@@ -2,6 +2,8 @@ package controlplane
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/itsankoff/incident-copilot/internal/signal"
 )
@@ -43,7 +45,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		Alertmanager: signal.Source{
 			Kind:     "alertmanager",
 			Instance: need("IC_ALERTMANAGER_INSTANCE"),
-			Token:    need("IC_ALERTMANAGER_TOKEN"),
+			Tokens:   strings.Split(need("IC_ALERTMANAGER_TOKEN"), ","),
 			Location: need("IC_ALERTMANAGER_LOCATION"),
 			Mapping:  signal.KubePrometheus,
 		},
@@ -53,6 +55,11 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	}
 	if missing != nil {
 		return Config{}, missing
+	}
+	// One token, or two during rotation, comma-separated: a bearer token
+	// cannot contain a comma.
+	if tokens := cfg.Alertmanager.Tokens; len(tokens) > 2 || slices.Contains(tokens, "") {
+		return Config{}, fmt.Errorf("IC_ALERTMANAGER_TOKEN: want one token, or two comma-separated during rotation")
 	}
 	return cfg, nil
 }

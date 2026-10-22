@@ -102,3 +102,19 @@ func TestTriageRepeatUpdatesLastSeenOnly(t *testing.T) {
 		t.Error("Triage modified its input")
 	}
 }
+
+func TestTriageResolvedForUnknownKeyIsDropped(t *testing.T) {
+	crash := sig("am/aaa", "KubePodCrashLooping", orders, t0)
+	open := []Incident{{ID: 1, Target: orders, OpenedAt: t0, Members: []Member{member(crash, t0)}}}
+
+	unknown := sig("am/zzz", "KubePodCrashLooping", orders, t0)
+	unknown.Status = signal.Resolved
+	if d := Triage(open, unknown, t0); d.Kind != Drop || d.Reason != "resolved Signal for an unknown key" {
+		t.Errorf("unknown key: %s %q, want a drop for an unknown key", d.Kind, d.Reason)
+	}
+	known := crash
+	known.Status = signal.Resolved
+	if d := Triage(open, known, t0); d.Kind != Drop || d.Reason == "resolved Signal for an unknown key" {
+		t.Errorf("known key: %s %q, want a drop that is not for an unknown key", d.Kind, d.Reason)
+	}
+}

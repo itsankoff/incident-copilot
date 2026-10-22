@@ -125,7 +125,7 @@ The rules live in a `PrometheusRule` at `deploy/observability/alerts.yaml`. They
 
 Every alert carries the labels `namespace`, `service` (or `pod` and `container`), and `severity`, plus a `summary` annotation. Alerts carry no hints about the cause.
 
-Alertmanager has a single receiver, a webhook to `http://incident-copilot.incident-copilot.svc:8080/webhook/alertmanager`, with `send_resolved: true`. Until the agent exists, a small **webhook sink** (`cmd/webhook-sink`) runs at that address and writes each payload to stdout and to `/data/alerts.jsonl`. The M1 smoke test uses it to check that alerts fire.
+Alertmanager uses the shipped route ([`deploy/alertmanager/incident-copilot.yaml`](../../deploy/alertmanager/incident-copilot.yaml)): one receiver, a webhook with `send_resolved: true` and `max_alerts: 0`, and a bearer token from the `incident-copilot-webhook` Secret, which `make observability` creates. Until the Control plane runs in a cluster (#73), the webhook goes to the host at `http://host.docker.internal:8080/webhook/alertmanager`. `Watchdog` and `InfoInhibitor` always fire, so they go to a `null` receiver.
 
 ## Fault injection
 

@@ -154,13 +154,23 @@ For local runs, copy [`.env.demo.example`](.env.demo.example) to `.env.demo`, wh
 
 To check the whole path against a real GitHub repository, follow the manual test in [`docs/manual-tests/github-issues.md`](docs/manual-tests/github-issues.md).
 
+### Alertmanager route
+
+Copy the route and receiver in [`deploy/alertmanager/incident-copilot.yaml`](deploy/alertmanager/incident-copilot.yaml) into your Alertmanager configuration, and set the URL and the token file. Its timers keep paired alerts inside the settle window and re-send firing alerts every 5 minutes, which Signal liveness relies on. The file explains each setting. Alertmanager HA pairs need no extra setup: both members send the same key, so the second notice is a repeat.
+
+The demo cluster's Alertmanager uses the same route. It sends to a Control plane running on your machine at `http://host.docker.internal:8080` with the token `demo-alertmanager-token`. To use another token, run `make observability IC_ALERTMANAGER_TOKEN=<token>`. To see Alerts arrive, start the Control plane with `IC_ALERTMANAGER_TOKEN=demo-alertmanager-token` and the default `IC_LISTEN_ADDR`.
+
+### Ingest bounds
+
+The Control plane rejects a request body over 1 MiB with `413`. It cuts each label and annotation value to 4 KiB and the raw alert to 64 KiB, and marks the Signal `truncated`. An unparseable body gets `400`. An internal failure gets `5xx`, so Alertmanager retries, and a retry is only a repeat notice. An alert that fails to normalise is dropped and audited, and the rest of its batch is accepted. A non-zero `truncatedAlerts` is audited.
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `IC_LISTEN_ADDR` | `:8080` | HTTP listen address |
 | `IC_STATE_PATH` | `incident-copilot.db` | SQLite file holding Incidents and ticket references |
 | `IC_AUDIT_PATH` | `audit.jsonl` | Hash-chained audit log |
 | `IC_ALERTMANAGER_INSTANCE` | required | Name of the Alertmanager Signal source, the prefix of every Signal key |
-| `IC_ALERTMANAGER_TOKEN` | required | Bearer token that Alertmanager sends |
+| `IC_ALERTMANAGER_TOKEN` | required | Bearer token that Alertmanager sends. During rotation, two comma-separated tokens, both valid |
 | `IC_ALERTMANAGER_LOCATION` | required | Location (cluster name) of every Target resolved from its Alerts |
 | `IC_GITHUB_API_URL` | `https://api.github.com` | GitHub REST API base URL |
 | `IC_GITHUB_REPO` | required | `owner/name` of the repository that gets one issue per Incident |
