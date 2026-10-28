@@ -138,7 +138,7 @@ make status        # pods in both clusters
 make down          # delete both clusters
 ```
 
-`make help` lists every target.
+`make help` lists every target. To check the two clusters end to end, from an alert in `ic-target` to a ticket, follow the manual test in [`docs/manual-tests/two-cluster-demo.md`](docs/manual-tests/two-cluster-demo.md).
 
 Planned, not implemented yet:
 
