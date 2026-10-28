@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	ossignal "os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -68,13 +69,21 @@ func runControlPlane(ctx context.Context, logger *slog.Logger) error {
 	}
 	defer func() { _ = log.Close() }()
 
-	tickets := github.New(cfg.GitHubAPIURL, cfg.GitHubRepo, cfg.GitHubToken, &http.Client{Timeout: 30 * time.Second})
+	var tickets controlplane.Ticketing
+	repo := ""
+	if gh := cfg.GitHub; gh != nil {
+		tickets = github.New(gh.APIURL, gh.Repo, gh.Token, &http.Client{Timeout: 30 * time.Second})
+		repo = gh.Repo
+	} else {
+		tickets = &logTickets{logger: logger}
+		logger.Warn("IC_GITHUB_REPO and IC_GITHUB_TOKEN unset: using the fake ticketing adapter, which only logs tickets")
+	}
 	cp := controlplane.New(alertmanager.New([]signal.Source{cfg.Alertmanager}), st, tickets, log, time.Now)
 
 	srv := &http.Server{Addr: cfg.ListenAddr, Handler: cp.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
-	logger.Info("control plane listening", "addr", cfg.ListenAddr, "source", cfg.Alertmanager.Instance, "repo", cfg.GitHubRepo)
+	logger.Info("control plane listening", "addr", cfg.ListenAddr, "source", cfg.Alertmanager.Instance, "repo", repo)
 
 	select {
 	case err := <-errc:
@@ -86,5 +95,27 @@ func runControlPlane(ctx context.Context, logger *slog.Logger) error {
 	if err := srv.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	return nil
+}
+
+// logTickets is the fake ticketing adapter: it logs each ticket instead of
+// writing it anywhere. References count up from log-1 per process.
+type logTickets struct {
+	logger *slog.Logger
+	mu     sync.Mutex
+	n      int
+}
+
+func (l *logTickets) Create(_ context.Context, title, body string) (string, error) {
+	l.mu.Lock()
+	l.n++
+	ref := fmt.Sprintf("log-%d", l.n)
+	l.mu.Unlock()
+	l.logger.Info("ticket created", "ref", ref, "title", title, "body", body)
+	return ref, nil
+}
+
+func (l *logTickets) Comment(_ context.Context, ref, body string) error {
+	l.logger.Info("ticket comment", "ref", ref, "body", body)
 	return nil
 }

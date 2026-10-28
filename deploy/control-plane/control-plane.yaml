@@ -1,0 +1,71 @@
+# One replica: Incidents and the audit log live in SQLite and JSONL on one
+# volume, so a rollout stops the old pod before starting the new one.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control-plane
+  labels: { app.kubernetes.io/name: control-plane, app.kubernetes.io/part-of: incident-copilot }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: control-plane }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: control-plane, app.kubernetes.io/part-of: incident-copilot }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532 }
+      containers:
+        - name: control-plane
+          image: incident-copilot
+          args: ["-role=control-plane"]
+          # IC_ALERTMANAGER_TOKEN, and IC_GITHUB_REPO and IC_GITHUB_TOKEN when
+          # .env.demo sets them.
+          envFrom:
+            - secretRef: { name: incident-copilot-env }
+          env:
+            - { name: IC_ALERTMANAGER_INSTANCE, value: ic-target-alertmanager }
+            - { name: IC_ALERTMANAGER_LOCATION, value: ic-target }
+            - { name: IC_STATE_PATH, value: /var/lib/incident-copilot/state.db }
+            - { name: IC_AUDIT_PATH, value: /var/lib/incident-copilot/audit.jsonl }
+          ports:
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits: { memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: state, mountPath: /var/lib/incident-copilot }
+      volumes:
+        - name: state
+          persistentVolumeClaim: { claimName: control-plane-state }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: control-plane-state
+  labels: { app.kubernetes.io/name: control-plane }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: { storage: 1Gi }
+---
+# ic-target's Alertmanager sends to this NodePort at the node's container name
+# on kind's Docker network:
+# http://ic-control-plane-control-plane:30080/webhook/alertmanager
+apiVersion: v1
+kind: Service
+metadata:
+  name: control-plane
+  labels: { app.kubernetes.io/name: control-plane }
+spec:
+  type: NodePort
+  selector: { app.kubernetes.io/name: control-plane }
+  ports:
+    - { name: http, port: 8080, targetPort: http, nodePort: 30080 }

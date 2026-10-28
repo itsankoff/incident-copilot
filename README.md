@@ -108,7 +108,7 @@ Every investigation records its model, prompt, and Runbook versions, so it can b
 
 ## Demo environment
 
-A local [kind](https://kind.sigs.k8s.io) cluster runs a small Go service alongside Prometheus, Loki, and Alertmanager. The service has injectable faults that cover the common categories of real incidents:
+Two local [kind](https://kind.sigs.k8s.io) clusters run the demo the way incident-copilot runs in production. The Target cluster `ic-target` runs a small Go service alongside Prometheus, Loki, and Alertmanager. The cluster `ic-control-plane` runs the incident-copilot Control plane. Alerts travel from `ic-target` to the Control plane, and nothing connects into `ic-target`. The service has injectable faults that cover the common categories of real incidents:
 
 | Fault | Symptom | Expected remediation |
 |---|---|---|
@@ -129,12 +129,13 @@ A local [kind](https://kind.sigs.k8s.io) cluster runs a small Go service alongsi
 ```sh
 make tools        # check that the prerequisites are installed
 make build test vet lint   # compile, unit-test, and lint the Go code
-make cluster      # create the kind cluster and install Prometheus, Alertmanager, Loki, Alloy
-make deploy       # build the demo-svc image and deploy orders, inventory, and loadgen
-make port-forward # Prometheus :9090, Alertmanager :9093, Loki API :3100, Grafana :3000
-                  # (Grafana is on by default: make cluster GRAFANA=0 or make observability GRAFANA=0 to disable it. Loki has no UI of its own.)
-make status       # pods in the demo, monitoring, and logging namespaces
-make down         # tear everything down
+make cluster       # create ic-target and ic-control-plane, and install Prometheus, Alertmanager, Loki, Alloy in ic-target
+make deploy        # build the demo-svc image and deploy orders, inventory, and loadgen into ic-target
+make control-plane # build the incident-copilot image and deploy the Control plane into ic-control-plane
+make port-forward  # ic-target's Prometheus :9090, Alertmanager :9093, Loki API :3100, Grafana :3000
+                   # (Grafana is on by default: make cluster GRAFANA=0 or make observability GRAFANA=0 to disable it. Loki has no UI of its own.)
+make status        # pods in both clusters
+make down          # delete both clusters
 ```
 
 `make help` lists every target.
@@ -150,7 +151,7 @@ make eval                  # run the evaluation harness across all fault scenari
 
 `incident-copilot -role control-plane` reads its configuration from environment variables. It serves the Alertmanager webhook at `/webhook/alertmanager`, and Alertmanager must send `Authorization: Bearer <IC_ALERTMANAGER_TOKEN>`. The `sensor` and `executor` roles are not implemented yet.
 
-For local runs, copy [`.env.demo.example`](.env.demo.example) to `.env.demo`, which is gitignored, and fill in the secrets.
+For local runs, copy [`.env.demo.example`](.env.demo.example) to `.env.demo`, which is gitignored, and fill in the secrets. `make control-plane` turns `.env.demo` into the `incident-copilot-env` Secret in `ic-control-plane`. Without `IC_GITHUB_REPO` and `IC_GITHUB_TOKEN`, the Control plane starts with a fake ticketing adapter that only logs tickets, and it logs that it did.
 
 To check the whole path against a real GitHub repository, follow the manual test in [`docs/manual-tests/github-issues.md`](docs/manual-tests/github-issues.md).
 
@@ -158,7 +159,7 @@ To check the whole path against a real GitHub repository, follow the manual test
 
 Copy the route and receiver in [`deploy/alertmanager/incident-copilot.yaml`](deploy/alertmanager/incident-copilot.yaml) into your Alertmanager configuration, and set the URL and the token file. Its timers keep paired alerts inside the settle window and re-send firing alerts every 5 minutes, which Signal liveness relies on. The file explains each setting. For an Alertmanager HA pair, give both members the same token, so they are one Signal source and send the same key. The second notice is then a repeat.
 
-The demo cluster's Alertmanager uses the same route. It sends to a Control plane running on your machine at `http://host.docker.internal:8080` with the token `demo-alertmanager-token`. To use another token, run `make observability IC_ALERTMANAGER_TOKEN=<token>`. To see Alerts arrive, start the Control plane with `IC_ALERTMANAGER_TOKEN=demo-alertmanager-token` and the default `IC_LISTEN_ADDR`. `host.docker.internal` resolves on Docker Desktop (macOS, Windows). On Linux it does not resolve inside kind; the two-cluster demo (#73) removes the host from the path.
+`ic-target`'s Alertmanager uses the same route. Both clusters sit on kind's Docker network, so it sends to the Control plane's NodePort by the `ic-control-plane` node's container name, `http://ic-control-plane-control-plane:30080/webhook/alertmanager`, with the token `demo-alertmanager-token`. To use another token, pass the same `IC_ALERTMANAGER_TOKEN=<token>` to both `make observability` and `make control-plane`. The demo Control plane is the Signal source `ic-target-alertmanager` with the Location `ic-target`.
 
 ### Ingest bounds
 
@@ -173,8 +174,8 @@ The Control plane rejects a request body over 1 MiB with `413`. It cuts each lab
 | `IC_ALERTMANAGER_TOKEN` | required | Bearer token that Alertmanager sends. During rotation, two comma-separated tokens, both valid |
 | `IC_ALERTMANAGER_LOCATION` | required | Location (cluster name) of every Target resolved from its Alerts |
 | `IC_GITHUB_API_URL` | `https://api.github.com` | GitHub REST API base URL |
-| `IC_GITHUB_REPO` | required | `owner/name` of the repository that gets one issue per Incident |
-| `IC_GITHUB_TOKEN` | required | Token allowed to create issues and comments in `IC_GITHUB_REPO` |
+| `IC_GITHUB_REPO` | unset | `owner/name` of the repository that gets one issue per Incident. Set it with `IC_GITHUB_TOKEN`, or leave both unset for the fake ticketing adapter |
+| `IC_GITHUB_TOKEN` | unset | Token allowed to create issues and comments in `IC_GITHUB_REPO` |
 
 ## Design choices
 

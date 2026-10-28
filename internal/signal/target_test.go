@@ -3,7 +3,7 @@ package signal
 import "testing"
 
 func TestKubePrometheusResolve(t *testing.T) {
-	const loc = "kind-incident-copilot"
+	const loc = "ic-target"
 	target := func(ns, kind, name string) *Target {
 		return &Target{Platform: "kubernetes", Location: loc, Namespace: ns, Kind: kind, Name: name}
 	}

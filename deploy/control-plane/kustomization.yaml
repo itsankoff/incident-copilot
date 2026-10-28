@@ -1,0 +1,9 @@
+# The incident-copilot Control plane in ic-control-plane. `make control-plane`
+# applies this through a generated overlay (build/control-plane) that sets the
+# image tag and generates the incident-copilot-env Secret from .env.demo.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: incident-copilot
+resources:
+  - namespace.yaml
+  - control-plane.yaml
