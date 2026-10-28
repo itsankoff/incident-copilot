@@ -5,6 +5,7 @@ package controlplane
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,9 +25,15 @@ type Ticketing interface {
 	Comment(ctx context.Context, ref, body string) error
 }
 
+// Store is the Control plane's state; *store.Store implements it.
+type Store interface {
+	OpenIncidents(ctx context.Context) ([]triage.Incident, error)
+	Begin(ctx context.Context) (*store.Tx, error)
+}
+
 type Server struct {
 	alertmanager signal.Adapter
-	store        *store.Store
+	store        Store
 	tickets      Ticketing
 	audit        *audit.Log
 	now          func() time.Time
@@ -34,9 +41,12 @@ type Server struct {
 	mu sync.Mutex // serialises Triage over the stored Incidents
 }
 
-func New(alertmanager signal.Adapter, st *store.Store, tickets Ticketing, log *audit.Log, now func() time.Time) *Server {
+func New(alertmanager signal.Adapter, st Store, tickets Ticketing, log *audit.Log, now func() time.Time) *Server {
 	return &Server{alertmanager: alertmanager, store: st, tickets: tickets, audit: log, now: now}
 }
+
+// maxBody is the largest request body a Signal source may send (ADR 0002 D3).
+const maxBody = 1 << 20
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -61,12 +71,20 @@ func (s *Server) intake(a signal.Adapter) http.HandlerFunc {
 		}
 		ref := src.Ref()
 
-		body, err := io.ReadAll(r.Body)
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
+		if errors.As(err, new(*http.MaxBytesError)) {
+			if err := s.audit.Append(now, "request.rejected", 0, map[string]any{"source": ref, "reason": "body over 1 MiB"}); err != nil {
+				http.Error(w, "audit", http.StatusInternalServerError)
+				return
+			}
+			http.Error(w, "body over 1 MiB", http.StatusRequestEntityTooLarge)
+			return
+		}
 		if err != nil {
 			http.Error(w, "read body", http.StatusBadRequest)
 			return
 		}
-		alerts, err := a.Split(body)
+		alerts, truncated, err := a.Split(body)
 		if err != nil {
 			if err := s.audit.Append(now, "request.rejected", 0, map[string]any{"source": ref, "reason": err.Error()}); err != nil {
 				http.Error(w, "audit", http.StatusInternalServerError)
@@ -74,6 +92,12 @@ func (s *Server) intake(a signal.Adapter) http.HandlerFunc {
 			}
 			http.Error(w, "unparseable body", http.StatusBadRequest)
 			return
+		}
+		if truncated > 0 {
+			if err := s.audit.Append(now, "request.truncated", 0, map[string]any{"source": ref, "truncatedAlerts": truncated}); err != nil {
+				http.Error(w, "audit", http.StatusInternalServerError)
+				return
+			}
 		}
 		for _, raw := range alerts {
 			sig, err := a.Map(src, raw, now)
@@ -84,6 +108,7 @@ func (s *Server) intake(a signal.Adapter) http.HandlerFunc {
 				}
 				continue
 			}
+			sig = signal.Bound(sig)
 			// The Control plane resolves an Alert's Target from its labels (ADR 0002 D4).
 			sig.Target = src.Mapping.Resolve(src.Location, sig.Labels)
 			if err := s.ingest(ctx, sig, now); err != nil {

@@ -19,6 +19,7 @@ import (
 	"github.com/itsankoff/incident-copilot/internal/audit"
 	"github.com/itsankoff/incident-copilot/internal/signal"
 	"github.com/itsankoff/incident-copilot/internal/store"
+	"github.com/itsankoff/incident-copilot/internal/triage"
 )
 
 var t0 = time.Date(2026, 10, 21, 3, 0, 0, 0, time.UTC)
@@ -65,13 +66,28 @@ type harness struct {
 	t       *testing.T
 	dir     string
 	url     string
+	store   *store.Store
 	tickets *fakeTickets
 	now     time.Time
 	close   func()
 }
 
+func prodAndStaging() []signal.Source {
+	return []signal.Source{
+		{Kind: "alertmanager", Instance: "prod-am", Tokens: []string{tokenProd}, Location: "prod", Mapping: signal.KubePrometheus},
+		{Kind: "alertmanager", Instance: "staging-am", Tokens: []string{tokenStaging}, Location: "staging", Mapping: signal.KubePrometheus},
+	}
+}
+
 // newHarness starts a Control plane whose state and audit log live in dir.
 func newHarness(t *testing.T, dir string, tickets *fakeTickets) *harness {
+	t.Helper()
+	return start(t, dir, tickets, prodAndStaging(), nil)
+}
+
+// start is newHarness with the given Signal sources; wrap, when set, stands
+// between the Control plane and its store.
+func start(t *testing.T, dir string, tickets *fakeTickets, sources []signal.Source, wrap func(*store.Store) Store) *harness {
 	t.Helper()
 	st, err := store.Open(filepath.Join(dir, "state.db"))
 	if err != nil {
@@ -81,12 +97,12 @@ func newHarness(t *testing.T, dir string, tickets *fakeTickets) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{t: t, dir: dir, tickets: tickets, now: t0.Add(time.Minute)}
-	am := alertmanager.New([]signal.Source{
-		{Kind: "alertmanager", Instance: "prod-am", Token: tokenProd, Location: "prod", Mapping: signal.KubePrometheus},
-		{Kind: "alertmanager", Instance: "staging-am", Token: tokenStaging, Location: "staging", Mapping: signal.KubePrometheus},
-	})
-	cp := New(am, st, tickets, log, func() time.Time { return h.now })
+	h := &harness{t: t, dir: dir, store: st, tickets: tickets, now: t0.Add(time.Minute)}
+	var s Store = st
+	if wrap != nil {
+		s = wrap(st)
+	}
+	cp := New(alertmanager.New(sources), s, tickets, log, func() time.Time { return h.now })
 	srv := httptest.NewServer(cp.Handler())
 	h.url = srv.URL
 	h.close = func() {
@@ -135,12 +151,16 @@ func (h *harness) auditLog() []audit.Entry {
 	}
 	var out []audit.Entry
 	sc := bufio.NewScanner(strings.NewReader(string(b)))
+	sc.Buffer(nil, 16<<20) // as audit.Verify: an entry can hold a 64 KiB raw
 	for sc.Scan() {
 		var e audit.Entry
 		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
 			h.t.Fatal(err)
 		}
 		out = append(out, e)
+	}
+	if err := sc.Err(); err != nil {
+		h.t.Fatal(err)
 	}
 	return out
 }
@@ -394,5 +414,170 @@ func TestUnparseableBody(t *testing.T) {
 	h := newHarness(t, t.TempDir(), &fakeTickets{})
 	if code := h.post("Bearer "+tokenProd, "{not json"); code != http.StatusBadRequest {
 		t.Errorf("status %d, want 400", code)
+	}
+	if len(ofType(h.auditLog(), "request.rejected")) != 1 {
+		t.Error("rejected body not audited")
+	}
+}
+
+func TestResolvedForUnknownKeyIsAuditedAndDropped(t *testing.T) {
+	h := newHarness(t, t.TempDir(), &fakeTickets{})
+	a := alert("KubePodCrashLooping", "aaa", orders)
+	a["status"] = "resolved"
+	h.send(tokenProd, a)
+
+	if len(h.tickets.created) != 0 {
+		t.Error("ticket created for a resolved Signal")
+	}
+	d := ofType(h.auditLog(), "triage.decision")
+	if len(d) != 1 || !strings.Contains(string(d[0].Data), `"drop"`) || !strings.Contains(string(d[0].Data), "unknown key") {
+		t.Errorf("audit decisions %+v, want one drop for an unknown key", d)
+	}
+}
+
+// failingStore fails every read of the open Incidents.
+type failingStore struct{ *store.Store }
+
+func (failingStore) OpenIncidents(context.Context) ([]triage.Incident, error) {
+	return nil, errors.New("disk I/O error")
+}
+
+func TestStoreFailureIsRetried(t *testing.T) {
+	h := start(t, t.TempDir(), &fakeTickets{}, prodAndStaging(), func(st *store.Store) Store { return failingStore{st} })
+	if code := h.post("Bearer "+tokenProd, payload(alert("KubePodCrashLooping", "aaa", orders))); code != http.StatusInternalServerError {
+		t.Fatalf("status %d, want 500 so Alertmanager retries", code)
+	}
+	if len(h.tickets.created) != 0 {
+		t.Error("ticket created despite the store failure")
+	}
+}
+
+func TestTwoTokensAreValidDuringRotation(t *testing.T) {
+	const old, next = "old-token", "next-token"
+	withTokens := func(tokens ...string) []signal.Source {
+		return []signal.Source{{Kind: "alertmanager", Instance: "prod-am", Tokens: tokens, Location: "prod", Mapping: signal.KubePrometheus}}
+	}
+	body := payload(alert("KubePodCrashLooping", "aaa", orders))
+
+	h := start(t, t.TempDir(), &fakeTickets{}, withTokens(old, next), nil)
+	for _, tok := range []string{old, next} {
+		if code := h.post("Bearer "+tok, body); code != http.StatusOK {
+			t.Errorf("token %s: status %d, want 200", tok, code)
+		}
+	}
+	for _, tt := range []struct{ kept, removed string }{{next, old}, {old, next}} {
+		h := start(t, t.TempDir(), &fakeTickets{}, withTokens(tt.kept), nil)
+		if code := h.post("Bearer "+tt.removed, body); code != http.StatusUnauthorized {
+			t.Errorf("removed token %s: status %d, want 401", tt.removed, code)
+		}
+		if code := h.post("Bearer "+tt.kept, body); code != http.StatusOK {
+			t.Errorf("kept token %s: status %d, want 200", tt.kept, code)
+		}
+	}
+}
+
+func TestBodyOverOneMiBIsRejected(t *testing.T) {
+	h := newHarness(t, t.TempDir(), &fakeTickets{})
+	a := alert("KubePodCrashLooping", "aaa", orders)
+	a["annotations"] = map[string]string{"description": ""}
+	small := payload(a)
+	// Pad the annotation so the whole body is exactly 1 MiB, then one byte more.
+	a["annotations"] = map[string]string{"description": strings.Repeat("x", 1<<20-len(small))}
+	exact := payload(a)
+	if len(exact) != 1<<20 {
+		t.Fatalf("test payload is %d bytes, want 1 MiB", len(exact))
+	}
+	a["annotations"] = map[string]string{"description": strings.Repeat("x", 1<<20-len(small)+1)}
+
+	if code := h.post("Bearer "+tokenProd, payload(a)); code != http.StatusRequestEntityTooLarge {
+		t.Errorf("1 MiB + 1 byte: status %d, want 413", code)
+	}
+	if len(h.tickets.created) != 0 {
+		t.Error("ticket created from an oversized body")
+	}
+	if r := ofType(h.auditLog(), "request.rejected"); len(r) != 1 || !strings.Contains(string(r[0].Data), "prod-am") {
+		t.Errorf("audit request.rejected %+v, want one naming the source", r)
+	}
+	if code := h.post("Bearer "+tokenProd, exact); code != http.StatusOK {
+		t.Errorf("exactly 1 MiB: status %d, want 200", code)
+	}
+}
+
+func TestOversizedValuesAreCut(t *testing.T) {
+	h := newHarness(t, t.TempDir(), &fakeTickets{})
+	a := alert("KubePodCrashLooping", "aaa", map[string]string{"namespace": "demo", "deployment": "orders", "image": strings.Repeat("l", 5<<10)})
+	a["annotations"] = map[string]string{"description": strings.Repeat("a", 100<<10)}
+	h.send(tokenProd, a, alert("KubePodCrashLooping", "bbb", orders))
+
+	var sigs []signal.Signal
+	for _, e := range ofType(h.auditLog(), "signal.received") {
+		var sig signal.Signal
+		if err := json.Unmarshal(e.Data, &sig); err != nil {
+			t.Fatal(err)
+		}
+		sigs = append(sigs, sig)
+	}
+	if len(sigs) != 2 {
+		t.Fatalf("%d Signals, want 2", len(sigs))
+	}
+	big, small := sigs[0], sigs[1]
+	if n := len(big.Labels["image"]); n != 4<<10 {
+		t.Errorf("label value is %d bytes, want 4 KiB", n)
+	}
+	if n := len(big.Annotations["description"]); n != 4<<10 {
+		t.Errorf("annotation value is %d bytes, want 4 KiB", n)
+	}
+	if !big.Truncated {
+		t.Error("cut Signal is not marked truncated")
+	}
+	if n := len(big.Raw); n > 64<<10 {
+		t.Errorf("raw is %d bytes, want at most 64 KiB", n)
+	}
+	if small.Truncated || !strings.Contains(string(small.Raw), `"fingerprint":"bbb"`) {
+		t.Errorf("Signal within bounds changed: truncated %v, raw %s", small.Truncated, small.Raw)
+	}
+}
+
+func TestTruncatedAlertsAreAudited(t *testing.T) {
+	h := newHarness(t, t.TempDir(), &fakeTickets{})
+	h.send(tokenProd, alert("KubePodCrashLooping", "aaa", orders))
+	if n := len(ofType(h.auditLog(), "request.truncated")); n != 0 {
+		t.Fatalf("%d request.truncated for truncatedAlerts 0, want none", n)
+	}
+
+	body := strings.Replace(payload(alert("KubePodCrashLooping", "bbb", orders)), `"truncatedAlerts":0`, `"truncatedAlerts":3`, 1)
+	if code := h.post("Bearer "+tokenProd, body); code != http.StatusOK {
+		t.Fatalf("status %d, want 200", code)
+	}
+	tr := ofType(h.auditLog(), "request.truncated")
+	if len(tr) != 1 || !strings.Contains(string(tr[0].Data), `"truncatedAlerts":3`) || !strings.Contains(string(tr[0].Data), "prod-am") {
+		t.Errorf("audit request.truncated %+v, want one with the count and source", tr)
+	}
+}
+
+func TestHAPairDuplicateIsOneIncident(t *testing.T) {
+	h := newHarness(t, t.TempDir(), &fakeTickets{})
+	body := payload(alert("KubePodCrashLooping", "aaa", orders))
+	first := h.now
+	if code := h.post("Bearer "+tokenProd, body); code != http.StatusOK {
+		t.Fatalf("first member: status %d", code)
+	}
+	h.now = h.now.Add(2 * time.Second)
+	if code := h.post("Bearer "+tokenProd, body); code != http.StatusOK {
+		t.Fatalf("second member: status %d", code)
+	}
+
+	open, err := h.store.OpenIncidents(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 1 || len(open[0].Members) != 1 {
+		t.Fatalf("open Incidents %+v, want one with one member", open)
+	}
+	if m := open[0].Members[0]; !m.FirstSeen.Equal(first) || !m.LastSeen.Equal(h.now) {
+		t.Errorf("member first-seen %v last-seen %v, want %v and %v", m.FirstSeen, m.LastSeen, first, h.now)
+	}
+	if len(h.tickets.created) != 1 || len(h.tickets.comments) != 0 {
+		t.Errorf("%d tickets, %d comments, want 1 and 0", len(h.tickets.created), len(h.tickets.comments))
 	}
 }

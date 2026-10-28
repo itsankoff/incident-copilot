@@ -73,13 +73,30 @@ alertmanager:
     resources:
       requests: { cpu: 10m, memory: 32Mi }
       limits: { memory: 128Mi }
+    # Mounted at /etc/alertmanager/secrets/incident-copilot-webhook/; the
+    # Makefile creates it.
+    secrets: [incident-copilot-webhook]
+  # The shipped route, deploy/alertmanager/incident-copilot.yaml; keep the two
+  # in step. The Control plane runs on the host until #73.
   config:
     route:
-      group_by: [alertname, namespace, service]
+      receiver: incident-copilot
+      group_by: ['...']
       group_wait: 10s
-      group_interval: 30s
-      repeat_interval: 1h
-      receiver: "null"
-      # The incident-copilot webhook receiver is added in M1.5.
+      group_interval: 1m
+      repeat_interval: 5m
+      routes:
+        # Always firing by design; they name no workload.
+        - receiver: "null"
+          matchers: ['alertname =~ "Watchdog|InfoInhibitor"']
     receivers:
       - name: "null"
+      - name: incident-copilot
+        webhook_configs:
+          - url: http://host.docker.internal:8080/webhook/alertmanager
+            send_resolved: true
+            max_alerts: 0
+            http_config:
+              authorization:
+                type: Bearer
+                credentials_file: /etc/alertmanager/secrets/incident-copilot-webhook/token

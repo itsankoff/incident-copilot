@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -30,7 +31,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 		t.Errorf("unexpected defaults: %+v", cfg)
 	}
 	am := cfg.Alertmanager
-	if am.Kind != "alertmanager" || am.Instance != "kind-am" || am.Token != "t1" || am.Location != "kind-incident-copilot" {
+	if am.Kind != "alertmanager" || am.Instance != "kind-am" || !slices.Equal(am.Tokens, []string{"t1"}) || am.Location != "kind-incident-copilot" {
 		t.Errorf("unexpected Alertmanager source: %+v", am)
 	}
 	if am.Mapping.Platform != signal.KubePrometheus.Platform || len(am.Mapping.Workloads) != len(signal.KubePrometheus.Workloads) {
@@ -48,5 +49,24 @@ func TestLoadConfigErrors(t *testing.T) {
 				t.Fatalf("LoadConfig error = %v, want %s: required", err, key)
 			}
 		})
+	}
+}
+
+func TestLoadConfigRotationTokens(t *testing.T) {
+	env := required()
+	env["IC_ALERTMANAGER_TOKEN"] = "old,next"
+	cfg, err := LoadConfig(envMap(env))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !slices.Equal(cfg.Alertmanager.Tokens, []string{"old", "next"}) {
+		t.Errorf("tokens %q, want old and next", cfg.Alertmanager.Tokens)
+	}
+
+	for _, bad := range []string{"a,b,c", "a,", ",b"} {
+		env["IC_ALERTMANAGER_TOKEN"] = bad
+		if _, err := LoadConfig(envMap(env)); err == nil || !strings.Contains(err.Error(), "IC_ALERTMANAGER_TOKEN") {
+			t.Errorf("IC_ALERTMANAGER_TOKEN=%q: error %v, want one naming the variable", bad, err)
+		}
 	}
 }

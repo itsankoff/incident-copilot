@@ -53,6 +53,12 @@ type Decision struct {
 // (or per key when there is no Target). It never modifies open.
 func Triage(open []Incident, s signal.Signal, now time.Time) Decision {
 	if s.Status != signal.Firing {
+		known := slices.ContainsFunc(open, func(inc Incident) bool {
+			return slices.ContainsFunc(inc.Members, func(m Member) bool { return m.Key == s.Key })
+		})
+		if !known {
+			return Decision{Kind: Drop, Reason: "resolved Signal for an unknown key"}
+		}
 		// Resolving Incidents is #45; until then a resolved Signal changes nothing.
 		return Decision{Kind: Drop, Reason: "resolved Signals are not handled yet"}
 	}
