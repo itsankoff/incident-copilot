@@ -162,7 +162,7 @@ The demo cluster's Alertmanager uses the same route. It sends to a Control plane
 
 ### Ingest bounds
 
-The Control plane rejects a request body over 1 MiB with `413`. It cuts each label and annotation value to 4 KiB and the raw alert to 64 KiB, and marks the Signal `truncated`. An unparseable body gets `400`. An internal failure gets `5xx`, so Alertmanager retries, and a retry is only a repeat notice. An alert that fails to normalise is dropped and audited, and the rest of its batch is accepted. A non-zero `truncatedAlerts` is audited.
+The Control plane rejects a request body over 1 MiB with `413`. It cuts each label and annotation value to 4 KiB and the raw alert to 64 KiB, and marks the Signal `truncated`. An unparseable body gets `400`. An internal failure gets `5xx`, so Alertmanager retries, and a retry is only a repeat notice. An alert that fails to normalise is dropped and audited, and the rest of its batch is accepted. A non-zero `truncatedAlerts` is audited. The manual test in [`docs/manual-tests/ingest-hardening.md`](docs/manual-tests/ingest-hardening.md) checks all of this and the demo route.
 
 | Variable | Default | Meaning |
 |---|---|---|
