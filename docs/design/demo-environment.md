@@ -1,8 +1,8 @@
 # Design: demo environment
 
-Status: proposed · Owner: @itsankoff · Last updated: 2026-09-21
+Status: proposed · Owner: @itsankoff · Last updated: 2026-10-28
 
-This document designs the local environment that incident-copilot is developed, demoed, and evaluated against: a kind cluster, an observability stack, and a small Go service with faults that can be injected on demand.
+This document designs the local environment that incident-copilot is developed, demoed, and evaluated against: two kind clusters, an observability stack, and a small Go service with faults that can be injected on demand. As in production, incident-copilot runs in its own cluster and the demo app runs in a Target cluster, and nothing connects into the Target cluster.
 
 ## Goals
 
@@ -12,47 +12,57 @@ This document designs the local environment that incident-copilot is developed, 
 4. **Fast.** An alert fires within about 3 minutes of injection. A full eval pass over four faults takes under 30 minutes.
 5. **Small.** The whole stack runs on a laptop with Docker at 4 CPUs and 8 GB RAM.
 
-Non-goals: production-grade observability (no HA, no long retention), multi-cluster setups, service mesh, or tracing. Tracing can come later if a fault needs it.
+Non-goals: production-grade observability (no HA, no long retention), production-grade networking between the clusters (no TLS, no ingress), service mesh, or tracing. Tracing can come later if a fault needs it.
 
 ## Topology
 
 ```mermaid
 flowchart LR
-    subgraph demo[namespace: demo]
-        LG[loadgen] -- HTTP 20 rps --> ORD[orders x2]
-        ORD -- HTTP --> INV[inventory x1]
+    subgraph target[cluster: ic-target]
+        subgraph demo[namespace: demo]
+            LG[loadgen] -- HTTP 20 rps --> ORD[orders x2]
+            ORD -- HTTP --> INV[inventory x1]
+        end
+        subgraph monitoring[namespace: monitoring]
+            PROM[(Prometheus)] --> AM[Alertmanager]
+            KSM[kube-state-metrics]
+        end
+        subgraph logging[namespace: logging]
+            ALLOY[Alloy] --> LOKI[(Loki)]
+        end
+        PROM -. scrape .-> ORD & INV & KSM
+        ALLOY -. tail pod logs .-> demo
     end
-    subgraph monitoring[namespace: monitoring]
-        PROM[(Prometheus)] --> AM[Alertmanager]
-        KSM[kube-state-metrics]
+    subgraph cp[cluster: ic-control-plane]
+        subgraph ic[namespace: incident-copilot]
+            CPD[Control plane] --- DB[(SQLite volume)]
+        end
     end
-    subgraph logging[namespace: logging]
-        ALLOY[Alloy] --> LOKI[(Loki)]
-    end
-    subgraph ic[namespace: incident-copilot]
-        SINK[webhook sink / agent]
-    end
-    PROM -. scrape .-> ORD & INV & KSM
-    ALLOY -. tail pod logs .-> demo
-    AM -- webhook --> SINK
+    AM -- "webhook, bearer token<br/>ic-control-plane-control-plane:30080" --> CPD
+    CPD -- issues --> GH[GitHub Issues]
     FC[faultctl] -. admin API / kubectl apply .-> demo
 ```
 
-### Cluster
+### Clusters
 
-- **kind** with one control-plane node and one worker node. The config lives in `deploy/kind/cluster.yaml`, and the node image is pinned there.
-- Cluster name `incident-copilot`. The kubeconfig context is `kind-incident-copilot`, and every Makefile target passes `--context` explicitly so it can never touch another cluster.
+- **`ic-target`** (context `kind-ic-target`): one control-plane node and one worker node, config in `deploy/kind/target.yaml`. It holds the demo app and the observability stack.
+- **`ic-control-plane`** (context `kind-ic-control-plane`): one node, config in `deploy/kind/control-plane.yaml`. It holds the Control plane.
+- The node image is pinned in `deploy/versions.env`. Every Makefile target passes the `--context` of the cluster it targets, so it can never touch another cluster.
 - A local image registry is not needed. Images are built with `docker build` and loaded with `kind load docker-image`.
 - Tool and chart versions are pinned in `deploy/versions.env` and sourced by the Makefile.
 
+### Networking
+
+Both clusters' nodes are containers on kind's Docker network, `kind`, which resolves container names. The Control plane's Service is a NodePort, `30080`, so `ic-target` reaches it at `http://ic-control-plane-control-plane:30080`, the `ic-control-plane` node's container name. The only connection between the clusters is Alertmanager → Control plane. Sensors (#47) will dial out to the same address.
+
 ### Namespaces
 
-| Namespace | Contents |
-|---|---|
-| `demo` | `orders`, `inventory`, `loadgen` |
-| `monitoring` | kube-prometheus-stack: Prometheus, Alertmanager, kube-state-metrics, node-exporter, Prometheus Operator. Grafana is on by default and disabled with `GRAFANA=0`. |
-| `logging` | Loki (single binary, filesystem storage) and Grafana Alloy (one replica that tails pod logs through the Kubernetes API, so it needs no hostPath mounts and ships each line once) |
-| `incident-copilot` | The agent. Until the agent exists, a webhook sink that records Alertmanager payloads. |
+| Cluster | Namespace | Contents |
+|---|---|---|
+| `ic-target` | `demo` | `orders`, `inventory`, `loadgen` |
+| `ic-target` | `monitoring` | kube-prometheus-stack: Prometheus, Alertmanager, kube-state-metrics, node-exporter, Prometheus Operator. Grafana is on by default and disabled with `GRAFANA=0`. |
+| `ic-target` | `logging` | Loki (single binary, filesystem storage) and Grafana Alloy (one replica that tails pod logs through the Kubernetes API, so it needs no hostPath mounts and ships each line once) |
+| `ic-control-plane` | `incident-copilot` | The Control plane (one replica, `Recreate`), its SQLite state and audit log on the `control-plane-state` volume, and the `incident-copilot-env` Secret that `make control-plane` generates from `.env.demo`. It is the Signal source `ic-target-alertmanager` with the Location `ic-target`. Without GitHub settings in `.env.demo`, it uses a fake ticketing adapter that only logs tickets. |
 
 Everything in `monitoring` and `logging` is installed with Helm from values files under `deploy/observability/`. kube-prometheus-stack scrape jobs for etcd, the scheduler, the controller manager, and kube-proxy are disabled because they are unreachable in kind and would fire noise alerts. `NodeClockNotSynchronising` is disabled too, because Docker Desktop's VM does not report NTP sync state. The upstream `kubernetesApps` rules are off, so the workload alerts that fire are exactly the ones in `alerts.yaml`.
 
@@ -125,7 +135,7 @@ The rules live in a `PrometheusRule` at `deploy/observability/alerts.yaml`. They
 
 Every alert carries the labels `namespace`, `service` (or `pod` and `container`), and `severity`, plus a `summary` annotation. Alerts carry no hints about the cause.
 
-Alertmanager uses the shipped route ([`deploy/alertmanager/incident-copilot.yaml`](../../deploy/alertmanager/incident-copilot.yaml)): one receiver, a webhook with `send_resolved: true` and `max_alerts: 0`, and a bearer token from the `incident-copilot-webhook` Secret, which `make observability` creates. Until the Control plane runs in a cluster (#73), the webhook goes to the host at `http://host.docker.internal:8080/webhook/alertmanager`. `Watchdog` and `InfoInhibitor` always fire, so they go to a `null` receiver.
+Alertmanager uses the shipped route ([`deploy/alertmanager/incident-copilot.yaml`](../../deploy/alertmanager/incident-copilot.yaml)): one receiver, a webhook with `send_resolved: true` and `max_alerts: 0`, and a bearer token from the `incident-copilot-webhook` Secret, which `make observability` creates. The webhook goes to the Control plane in `ic-control-plane` at `http://ic-control-plane-control-plane:30080/webhook/alertmanager`. `Watchdog` and `InfoInhibitor` always fire, so they go to a `null` receiver.
 
 ## Fault injection
 
@@ -201,12 +211,13 @@ The configuration that deploy faults change lives in a **separate repository** (
 ```
 cmd/demo-svc/            orders | inventory | loadgen roles
 cmd/faultctl/            fault injection CLI
-cmd/webhook-sink/        records Alertmanager webhooks (M1 stand-in for the agent)
+cmd/incident-copilot/    the Control plane (sensor and executor roles to come)
 internal/demo/           service handlers, config, admin API, telemetry
 deploy/versions.env      pinned tool, chart, and node-image versions
-deploy/kind/             cluster.yaml
+deploy/kind/             target.yaml (ic-target), control-plane.yaml (ic-control-plane)
 deploy/observability/    Helm values, alerts.yaml, ServiceMonitors
-deploy/demo/             Kustomize base for orders, inventory, loadgen, webhook-sink
+deploy/demo/             Kustomize base for orders, inventory, loadgen
+deploy/control-plane/    Kustomize base for the Control plane
 eval/scenarios/          one YAML per fault (injection and ground truth)
 test/e2e/                smoke tests, build tag `e2e`
 Makefile
@@ -217,15 +228,16 @@ Makefile
 | Target | Does |
 |---|---|
 | `make tools` | Checks that `docker`, `kind`, `kubectl`, `helm`, and `go` are installed at the pinned versions |
-| `make cluster` | Creates the kind cluster and installs the observability stack (`make observability`). Idempotent. |
+| `make cluster` | Creates `ic-target` and `ic-control-plane`, and installs the observability stack in `ic-target` (`make observability`). Idempotent. |
 | `make build` / `test` / `vet` | Go build, unit tests, vet |
-| `make image` | Builds the `demo-svc` image, tagged with the Git SHA, and loads it into kind |
-| `make deploy` | Builds the image, applies `deploy/demo` through a generated overlay that sets the tag, and waits for rollout |
-| `make status` / `port-forward` | Pod overview. Prometheus :9090, Alertmanager :9093, and Loki :3100 on localhost. |
+| `make image` | Builds the `demo-svc` image, tagged with the Git SHA, and loads it into `ic-target` |
+| `make deploy` | Builds the image, applies `deploy/demo` to `ic-target` through a generated overlay that sets the tag, and waits for rollout |
+| `make control-plane` | Builds the `incident-copilot` image, loads it into `ic-control-plane`, and applies `deploy/control-plane` through a generated overlay that sets the tag and the Secret from `.env.demo` |
+| `make status` / `port-forward` | Pods in both clusters. `ic-target`'s Prometheus :9090, Alertmanager :9093, and Loki :3100 on localhost. |
 | `make fault F=<scenario>` | `faultctl inject` |
 | `make clear` | `faultctl clear` |
 | `make smoke` | `go test -tags e2e ./test/e2e/...` |
-| `make down` | Deletes the cluster |
+| `make down` | Deletes both clusters |
 
 ## Open questions
 

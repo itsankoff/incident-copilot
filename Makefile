@@ -7,19 +7,22 @@ SHELL       := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 .DEFAULT_GOAL := help
 
-KUBE_CONTEXT := kind-$(CLUSTER_NAME)
-KUBECTL      := kubectl --context $(KUBE_CONTEXT)
-HELM         := helm --kube-context $(KUBE_CONTEXT)
+# Every kubectl and helm call pins the context of the cluster it targets.
+TARGET_KUBECTL := kubectl --context kind-$(TARGET_CLUSTER)
+TARGET_HELM    := helm --kube-context kind-$(TARGET_CLUSTER)
+CP_KUBECTL     := kubectl --context kind-$(CONTROL_PLANE_CLUSTER)
 
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DIRTY   := $(shell git diff --quiet HEAD -- 2>/dev/null || echo -dirty)
 VERSION ?= $(COMMIT)$(DIRTY)
 IMAGE   := demo-svc:$(VERSION)
+CP_IMAGE := incident-copilot:$(VERSION)
 
 # Setting up grafana during make observability (0 disables it)
 GRAFANA ?= 1
-# The bearer token the demo Alertmanager sends; start the Control plane with
-# the same IC_ALERTMANAGER_TOKEN. Local demo only: set your own to override.
+# The bearer token ic-target's Alertmanager sends and the Control plane
+# accepts. Local demo only: set your own to override, for both make observability
+# and make control-plane.
 IC_ALERTMANAGER_TOKEN ?= demo-alertmanager-token
 OBS_DIR := deploy/observability
 
@@ -67,42 +70,45 @@ tools: ## Check that required tools are installed
 ##@ Demo environment
 
 .PHONY: cluster
-cluster: tools ## Create the kind cluster and install the observability stack (idempotent)
-	@if kind get clusters 2>/dev/null | grep -qx '$(CLUSTER_NAME)'; then \
-	  echo "cluster $(CLUSTER_NAME) already exists"; \
-	else \
-	  kind create cluster --name $(CLUSTER_NAME) --config deploy/kind/cluster.yaml \
-	    --image $(KIND_NODE_IMAGE) --wait 120s; \
-	fi
+cluster: tools ## Create the ic-target and ic-control-plane kind clusters and install the observability stack (idempotent)
+	@for c in $(TARGET_CLUSTER):target $(CONTROL_PLANE_CLUSTER):control-plane; do \
+	  name=$${c%%:*}; \
+	  if kind get clusters 2>/dev/null | grep -qx "$$name"; then \
+	    echo "cluster $$name already exists"; \
+	  else \
+	    kind create cluster --name "$$name" --config deploy/kind/$${c#*:}.yaml \
+	      --image $(KIND_NODE_IMAGE) --wait 120s; \
+	  fi; \
+	done
 	$(MAKE) observability
 
 .PHONY: observability
-observability: ## Install or upgrade Prometheus, Alertmanager, Loki, and Alloy
+observability: ## Install or upgrade Prometheus, Alertmanager, Loki, and Alloy in ic-target
 	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update >/dev/null
 	helm repo add grafana https://grafana.github.io/helm-charts --force-update >/dev/null
 	helm repo update prometheus-community grafana >/dev/null
-	$(KUBECTL) create namespace monitoring --dry-run=client -o yaml | $(KUBECTL) apply -f -
-	$(KUBECTL) -n monitoring create secret generic incident-copilot-webhook \
-	  --from-literal=token='$(IC_ALERTMANAGER_TOKEN)' --dry-run=client -o yaml | $(KUBECTL) apply -f -
-	$(HELM) upgrade --install kps prometheus-community/kube-prometheus-stack \
+	$(TARGET_KUBECTL) create namespace monitoring --dry-run=client -o yaml | $(TARGET_KUBECTL) apply -f -
+	$(TARGET_KUBECTL) -n monitoring create secret generic incident-copilot-webhook \
+	  --from-literal=token='$(IC_ALERTMANAGER_TOKEN)' --dry-run=client -o yaml | $(TARGET_KUBECTL) apply -f -
+	$(TARGET_HELM) upgrade --install kps prometheus-community/kube-prometheus-stack \
 	  --version $(KPS_CHART_VERSION) -n monitoring --create-namespace \
 	  -f $(OBS_DIR)/kube-prometheus-stack.yaml \
 	  $(if $(filter 1,$(GRAFANA)),--set grafana.enabled=true) \
 	  --wait --timeout 10m
-	$(HELM) upgrade --install loki grafana/loki \
+	$(TARGET_HELM) upgrade --install loki grafana/loki \
 	  --version $(LOKI_CHART_VERSION) -n logging --create-namespace \
 	  -f $(OBS_DIR)/loki.yaml --wait --timeout 10m
-	$(HELM) upgrade --install alloy grafana/alloy \
+	$(TARGET_HELM) upgrade --install alloy grafana/alloy \
 	  --version $(ALLOY_CHART_VERSION) -n logging \
 	  -f $(OBS_DIR)/alloy.yaml --wait --timeout 5m
 
 .PHONY: image
-image: ## Build the demo-svc image and load it into the kind cluster
+image: ## Build the demo-svc image and load it into ic-target
 	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(IMAGE) .
-	kind load docker-image $(IMAGE) --name $(CLUSTER_NAME)
+	kind load docker-image $(IMAGE) --name $(TARGET_CLUSTER)
 
 .PHONY: deploy
-deploy: image ## Deploy the demo workload (orders, inventory, loadgen) and wait for rollout
+deploy: image ## Deploy the demo workload (orders, inventory, loadgen) into ic-target and wait for rollout
 	@mkdir -p build/deploy
 	@printf '%s\n' \
 	  'apiVersion: kustomize.config.k8s.io/v1beta1' \
@@ -117,25 +123,50 @@ deploy: image ## Deploy the demo workload (orders, inventory, loadgen) and wait 
 	  '        app.kubernetes.io/version: "$(VERSION)",' \
 	  '        incident-copilot.dev/commit: "$(COMMIT)"}}}' \
 	  > build/deploy/kustomization.yaml
-	$(KUBECTL) apply -k build/deploy
+	$(TARGET_KUBECTL) apply -k build/deploy
 	@for d in inventory orders loadgen; do \
-	  $(KUBECTL) -n demo rollout status deploy/$$d --timeout 180s; \
+	  $(TARGET_KUBECTL) -n demo rollout status deploy/$$d --timeout 180s; \
 	done
 
+.PHONY: control-plane
+control-plane: ## Build incident-copilot, load it into ic-control-plane, and deploy the Control plane with Secrets from .env.demo
+	docker build --build-arg BIN=incident-copilot --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(CP_IMAGE) .
+	kind load docker-image $(CP_IMAGE) --name $(CONTROL_PLANE_CLUSTER)
+	@rm -rf build/control-plane && mkdir -p build/control-plane
+	@# IC_ALERTMANAGER_TOKEN comes from the Makefile, so it matches ic-target's.
+	@if [ -f .env.demo ]; then grep -v '^IC_ALERTMANAGER_TOKEN=' .env.demo > build/control-plane/.env.demo || true; \
+	else echo "no .env.demo: the Control plane starts with the fake ticketing adapter"; touch build/control-plane/.env.demo; fi
+	@printf '%s\n' \
+	  'apiVersion: kustomize.config.k8s.io/v1beta1' \
+	  'kind: Kustomization' \
+	  'resources: [../../deploy/control-plane]' \
+	  'images: [{name: incident-copilot, newName: incident-copilot, newTag: "$(VERSION)"}]' \
+	  'secretGenerator:' \
+	  '  - name: incident-copilot-env' \
+	  '    namespace: incident-copilot' \
+	  '    envs: [.env.demo]' \
+	  '    literals: ["IC_ALERTMANAGER_TOKEN=$(IC_ALERTMANAGER_TOKEN)"]' \
+	  > build/control-plane/kustomization.yaml
+	$(CP_KUBECTL) apply -k build/control-plane
+	$(CP_KUBECTL) -n incident-copilot rollout status deploy/control-plane --timeout 180s
+
 .PHONY: status
-status: ## Show pods in the demo, monitoring, and logging namespaces
-	$(KUBECTL) get pods -n demo -o wide
-	$(KUBECTL) get pods -n monitoring
-	$(KUBECTL) get pods -n logging
+status: ## Show pods in ic-target (demo, monitoring, logging) and ic-control-plane (incident-copilot)
+	@echo "== $(TARGET_CLUSTER)"
+	$(TARGET_KUBECTL) get pods -n demo -o wide
+	$(TARGET_KUBECTL) get pods -n monitoring
+	$(TARGET_KUBECTL) get pods -n logging
+	@echo "== $(CONTROL_PLANE_CLUSTER)"
+	$(CP_KUBECTL) get pods -n incident-copilot
 
 .PHONY: port-forward
-port-forward: ## Forward Prometheus :9090, Alertmanager :9093, Loki API :3100, Grafana :3000 if enabled (Ctrl-C to stop)
+port-forward: ## Forward ic-target's Prometheus :9090, Alertmanager :9093, Loki API :3100, Grafana :3000 if enabled (Ctrl-C to stop)
 	@trap 'kill 0' INT TERM EXIT; \
-	$(KUBECTL) -n monitoring port-forward svc/kps-prometheus 9090:9090 & \
-	$(KUBECTL) -n monitoring port-forward svc/kps-alertmanager 9093:9093 & \
-	$(KUBECTL) -n logging port-forward svc/loki 3100:3100 & \
-	if $(KUBECTL) -n monitoring get svc kps-grafana >/dev/null 2>&1; then \
-	  $(KUBECTL) -n monitoring port-forward svc/kps-grafana 3000:80 & \
+	$(TARGET_KUBECTL) -n monitoring port-forward svc/kps-prometheus 9090:9090 & \
+	$(TARGET_KUBECTL) -n monitoring port-forward svc/kps-alertmanager 9093:9093 & \
+	$(TARGET_KUBECTL) -n logging port-forward svc/loki 3100:3100 & \
+	if $(TARGET_KUBECTL) -n monitoring get svc kps-grafana >/dev/null 2>&1; then \
+	  $(TARGET_KUBECTL) -n monitoring port-forward svc/kps-grafana 3000:80 & \
 	  echo "Grafana: http://localhost:3000/explore (Loki and Prometheus datasources)"; \
 	else \
 	  echo "Grafana is off. Enable it with: make observability GRAFANA=1"; \
@@ -143,6 +174,7 @@ port-forward: ## Forward Prometheus :9090, Alertmanager :9093, Loki API :3100, G
 	wait
 
 .PHONY: down
-down: ## Delete the kind cluster
-	kind delete cluster --name $(CLUSTER_NAME)
+down: ## Delete both kind clusters
+	kind delete cluster --name $(TARGET_CLUSTER)
+	kind delete cluster --name $(CONTROL_PLANE_CLUSTER)
 	rm -rf build

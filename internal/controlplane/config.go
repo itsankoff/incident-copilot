@@ -16,9 +16,14 @@ type Config struct {
 	StatePath    string // SQLite
 	AuditPath    string // hash-chained JSONL
 	Alertmanager signal.Source
-	GitHubAPIURL string
-	GitHubRepo   string // owner/name
-	GitHubToken  string
+	GitHub       *GitHub // nil: the fake ticketing adapter
+}
+
+// GitHub is the GitHub Issues ticketing configuration.
+type GitHub struct {
+	APIURL string
+	Repo   string // owner/name
+	Token  string
 }
 
 // LoadConfig builds a Config from environment variables read through getenv.
@@ -49,12 +54,15 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 			Location: need("IC_ALERTMANAGER_LOCATION"),
 			Mapping:  signal.KubePrometheus,
 		},
-		GitHubAPIURL: env("IC_GITHUB_API_URL", "https://api.github.com"),
-		GitHubRepo:   need("IC_GITHUB_REPO"),
-		GitHubToken:  need("IC_GITHUB_TOKEN"),
 	}
 	if missing != nil {
 		return Config{}, missing
+	}
+	switch repo, token := getenv("IC_GITHUB_REPO"), getenv("IC_GITHUB_TOKEN"); {
+	case repo != "" && token != "":
+		cfg.GitHub = &GitHub{APIURL: env("IC_GITHUB_API_URL", "https://api.github.com"), Repo: repo, Token: token}
+	case repo != "" || token != "":
+		return Config{}, fmt.Errorf("IC_GITHUB_REPO and IC_GITHUB_TOKEN: set both, or neither for the fake ticketing adapter")
 	}
 	// One token, or two during rotation, comma-separated: a bearer token
 	// cannot contain a comma.

@@ -1,8 +1,8 @@
-# kind cluster for the incident-copilot demo environment.
+# kind cluster ic-target: the demo app and its observability stack.
 # The node image is set by the Makefile from deploy/versions.env (KIND_NODE_IMAGE).
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
-name: incident-copilot
+name: ic-target
 nodes:
   - role: control-plane
   - role: worker

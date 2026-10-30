@@ -77,7 +77,8 @@ alertmanager:
     # Makefile creates it.
     secrets: [incident-copilot-webhook]
   # The shipped route, deploy/alertmanager/incident-copilot.yaml; keep the two
-  # in step. The Control plane runs on the host until #73.
+  # in step. The URL is the Control plane's NodePort in ic-control-plane, by
+  # its node's container name on kind's Docker network.
   config:
     route:
       receiver: incident-copilot
@@ -93,7 +94,7 @@ alertmanager:
       - name: "null"
       - name: incident-copilot
         webhook_configs:
-          - url: http://host.docker.internal:8080/webhook/alertmanager
+          - url: http://ic-control-plane-control-plane:30080/webhook/alertmanager
             send_resolved: true
             max_alerts: 0
             http_config:

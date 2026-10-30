@@ -1,0 +1,10 @@
+# kind cluster ic-control-plane: the incident-copilot Control plane.
+# The node image is set by the Makefile from deploy/versions.env (KIND_NODE_IMAGE).
+# ic-target's Alertmanager reaches the Control plane's NodePort at this node's
+# container name on kind's Docker network:
+# http://ic-control-plane-control-plane:30080/webhook/alertmanager
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: ic-control-plane
+nodes:
+  - role: control-plane

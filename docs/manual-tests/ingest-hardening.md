@@ -1,12 +1,12 @@
 # Manual test: Ingest hardening and the shipped Alertmanager route
 
-This test checks how the Control plane receives Signals from noisy, malformed, or hostile senders, and that the demo cluster's Alertmanager sends to it through the shipped route. Part 1 uses `curl` in place of Alertmanager, so it needs no cluster. It covers the status contract, ingest bounds, token rotation, an HA pair's duplicate notice, `truncatedAlerts`, and a `resolved` for an unknown key. Part 2 uses the kind cluster. Run it whenever the Alertmanager adapter, the intake path, the ingest bounds, or the shipped route changes.
+This test checks how the Control plane receives Signals from noisy, malformed, or hostile senders, and that `ic-target`'s Alertmanager sends to it in `ic-control-plane` through the shipped route. Part 1 uses `curl` in place of Alertmanager, so it needs no cluster. It covers the status contract, ingest bounds, token rotation, an HA pair's duplicate notice, `truncatedAlerts`, and a `resolved` for an unknown key. Part 2 uses the two demo clusters. Run it whenever the Alertmanager adapter, the intake path, the ingest bounds, or the shipped route changes.
 
 ## Before you start
 
 - **Everything from [the GitHub Issues manual test](github-issues.md#before-you-start)**: a scratch repository for test tickets, a fine-grained token with **Issues: Read and write**, and `.env.demo` with `IC_GITHUB_REPO` and `IC_GITHUB_TOKEN`. Every run creates real issues there.
 - **Go 1.25+, `curl`, `jq`, and the `gh` CLI.**
-- **For Part 2 only:** Docker Desktop (macOS or Windows), plus the `make tools` prerequisites. In kind on Linux, `host.docker.internal` does not resolve, so Part 2 cannot reach the host.
+- **For Part 2 only:** the `make tools` prerequisites.
 
 ## Part 1: Signal intake, without a cluster
 
@@ -155,53 +155,49 @@ sqlite3 "$RUN/state.db" "SELECT incident_id, key, first_seen, last_seen FROM mem
 # expect one row; skip this if you have no sqlite3
 ```
 
-## Part 2: The shipped route in the demo cluster
+## Part 2: The shipped route between the two demo clusters
 
-### 1. Install the route
+### 1. Install the route and the Control plane
 
 ```sh
-make cluster   # or `make observability` if the cluster already exists
+make cluster         # or `make observability` if the clusters already exist
+make control-plane
 ```
 
-It creates the `incident-copilot-webhook` Secret in `monitoring`, holding the token `demo-alertmanager-token`, and installs Alertmanager with the shipped route. Check that the route is loaded:
+`make cluster` creates the `incident-copilot-webhook` Secret in `ic-target`'s `monitoring` namespace, holding the token `demo-alertmanager-token`, and installs Alertmanager with the shipped route. `make control-plane` deploys the Control plane into `ic-control-plane` with the same token and the GitHub settings from `.env.demo`. Check that the route is loaded:
 
 ```sh
-am() { kubectl --context kind-incident-copilot -n monitoring exec alertmanager-kps-alertmanager-0 -c alertmanager -- "$@"; }
+am() { kubectl --context kind-ic-target -n monitoring exec alertmanager-kps-alertmanager-0 -c alertmanager -- "$@"; }
 am amtool config routes --alertmanager.url=http://localhost:9093
 # expect: incident-copilot at the root, with a "null" child for Watchdog|InfoInhibitor
 am amtool config show --alertmanager.url=http://localhost:9093 \
   | grep -E "'\.\.\.'|group_wait|group_interval|repeat_interval|send_resolved|max_alerts|credentials_file"
 # expect '...', group_wait 10s, group_interval 1m, repeat_interval 5m, send_resolved true,
-# max_alerts 0, and the incident-copilot-webhook token file. The URL shows as <secret>; step 3 proves it.
+# max_alerts 0, and the incident-copilot-webhook token file. The URL shows as <secret>; step 2 proves it.
 ```
 
-### 2. Start the Control plane on the host
-
-The demo Alertmanager sends to `http://host.docker.internal:8080`, so the Control plane must listen on port 8080 on every interface.
+Check that the Control plane is up with GitHub ticketing. The image is distroless, so `audit` reads the audit log through a debug container:
 
 ```sh
-RUN2=$(mktemp -d)
-go build -o "$RUN2/incident-copilot" ./cmd/incident-copilot
-( set -a; . ./.env.demo; set +a
-  IC_STATE_PATH="$RUN2/state.db" IC_AUDIT_PATH="$RUN2/audit.jsonl" \
-  IC_ALERTMANAGER_INSTANCE=kind-alertmanager \
-  IC_ALERTMANAGER_TOKEN=demo-alertmanager-token \
-  IC_ALERTMANAGER_LOCATION=kind-incident-copilot \
-  exec "$RUN2/incident-copilot" -role control-plane ) > "$RUN2/control-plane.log" 2>&1 &
-CP=$!
-sleep 1; cat "$RUN2/control-plane.log"   # expect "control plane listening" on :8080
+icp() { kubectl --context kind-ic-control-plane -n incident-copilot "$@"; }
+icp logs deploy/control-plane   # expect "control plane listening" with your IC_GITHUB_REPO as "repo"
+audit() {
+  icp debug "$(icp get pod -l app.kubernetes.io/name=control-plane -o name)" -q -i \
+    --image=busybox:1.37 --target=control-plane --profile=general \
+    -- cat /proc/1/root/var/lib/incident-copilot/audit.jsonl 2>/dev/null
+}
 ```
 
-### 3. Fire an alert, then resolve it
+### 2. Fire an alert, then resolve it
 
 ```sh
 am amtool alert add ManualRouteCheck severity=warning namespace=demo deployment=orders \
   --annotation=description=MANUAL-TEST-ANNOTATION --alertmanager.url=http://localhost:9093
 sleep 20
-jq -c '[.seq, .type, .incident, (.data.kind // .data.ref // "")]' "$RUN2/audit.jsonl"
+audit | jq -c '[.seq, .type, .incident, (.data.kind // .data.ref // "")]'
 ```
 
-Within about 10 seconds (`group_wait`), expect `signal.received`, `triage.decision` (`open`), and `ticket.created`. A new issue `ManualRouteCheck on kind-incident-copilot/demo/Deployment/orders` appears in the tickets repository. The demo's other alerts can arrive too, if any are firing. `Watchdog` never does.
+Within about 10 seconds (`group_wait`), expect `signal.received`, `triage.decision` (`open`), and `ticket.created`. A new issue `ManualRouteCheck on ic-target/demo/Deployment/orders` appears in the tickets repository. The demo's other alerts can arrive too, if any are firing. `Watchdog` never does.
 
 Resolve it. With `send_resolved: true`, Alertmanager sends the resolved notice after `group_interval` (1 minute):
 
@@ -209,13 +205,12 @@ Resolve it. With `send_resolved: true`, Alertmanager sends the resolved notice a
 am amtool alert add ManualRouteCheck severity=warning namespace=demo deployment=orders \
   --end="$(date -u +%Y-%m-%dT%H:%M:%SZ)" --alertmanager.url=http://localhost:9093
 sleep 75
-jq -c 'select(.type == "triage.decision") | [.seq, .data.kind, (.data.reason // "")]' "$RUN2/audit.jsonl"
+audit | jq -c 'select(.type == "triage.decision") | [.seq, .data.kind, (.data.reason // "")]'
 # expect a last entry: drop, "resolved Signals are not handled yet" (resolving Incidents is #45)
-kill $CP
 ```
 
-If nothing arrives, check `am wget -qO- http://localhost:9093/metrics | grep notifications_failed_total`. If the count grows, Alertmanager cannot reach the host or its token is wrong, and the Alertmanager log says which: `kubectl --context kind-incident-copilot -n monitoring logs alertmanager-kps-alertmanager-0 -c alertmanager | tail`.
+If nothing arrives, check `am wget -qO- http://localhost:9093/metrics | grep notifications_failed_total`. If the count grows, Alertmanager cannot reach the Control plane at `ic-control-plane-control-plane:30080` or its token is wrong, and the Alertmanager log says which: `kubectl --context kind-ic-target -n monitoring logs alertmanager-kps-alertmanager-0 -c alertmanager | tail`.
 
 ## Clean up
 
-Close the issues the run created, or keep them as a record. Then delete the temporary directories with `rm -rf "$RUN" "$RUN2"`. The `ManualRouteCheck` alert is already resolved.
+Close the issues the run created, or keep them as a record. Then delete the temporary directory with `rm -rf "$RUN"`. The `ManualRouteCheck` alert is already resolved.
