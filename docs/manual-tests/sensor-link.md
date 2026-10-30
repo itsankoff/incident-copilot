@@ -75,7 +75,7 @@ audit | jq -c '[.seq, .type, (.data.location // .data.ref.location // ""), (.dat
 # error; location.online; link.refused for ghost with "location not in config"
 audit | grep -c demo-sensor-token   # expect 0
 audit | jq -c 'select(.type == "evidence.query") | .data | keys' | sort -u
-# expect ref, tool, outcome, and bytes and sha256 or error: never the answer itself
+# expect ref, tool, outcome, and bytes and sha256 on success: never the answer itself
 ```
 
 ## 6. Nothing connects into `ic-target`, and the Sensor only reads

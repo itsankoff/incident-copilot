@@ -165,16 +165,29 @@ func (h *Hub) next(w http.ResponseWriter, r *http.Request) {
 	}
 	hold := time.NewTimer(h.PollHold)
 	defer hold.Stop()
-	select {
-	case c := <-l.calls:
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(c)
-	case <-hold.C:
-		w.WriteHeader(http.StatusNoContent)
-	case <-h.stop:
-		w.WriteHeader(http.StatusNoContent)
-	case <-r.Context().Done():
+	for {
+		select {
+		case c := <-l.calls:
+			if !h.waiting(l, c.ID) {
+				continue // its caller gave up while it was queued
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(c)
+		case <-hold.C:
+			w.WriteHeader(http.StatusNoContent)
+		case <-h.stop:
+			w.WriteHeader(http.StatusNoContent)
+		case <-r.Context().Done():
+		}
+		return
 	}
+}
+
+func (h *Hub) waiting(l *location, id string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, ok := l.pending[id]
+	return ok
 }
 
 // polled records a poll, bringing the Location online if it was not.
@@ -208,7 +221,7 @@ func (h *Hub) reply(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		// Late, or a Call this Location never received. Only this Location's
 		// pending Calls can be answered, so one Sensor cannot speak for another.
-		h.refuse(r, "no such call")
+		_ = h.audit.Append(h.now(), "link.reply_dropped", 0, map[string]string{"location": r.PathValue("location"), "call": r.PathValue("id")})
 		http.Error(w, "no such call", http.StatusNotFound)
 		return
 	}

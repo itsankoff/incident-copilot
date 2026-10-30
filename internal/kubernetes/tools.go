@@ -231,9 +231,12 @@ func events(ctx context.Context, c clientset.Interface, q evidence.Query) (any, 
 	return records, nil
 }
 
-// eventTime is when e last happened; newer event writers set only EventTime.
+// eventTime is when e last happened; newer event writers set only EventTime
+// and, when it recurs, Series.
 func eventTime(e *corev1.Event) time.Time {
 	switch {
+	case e.Series != nil:
+		return e.Series.LastObservedTime.Time
 	case !e.LastTimestamp.IsZero():
 		return e.LastTimestamp.Time
 	case !e.EventTime.IsZero():

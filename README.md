@@ -164,7 +164,7 @@ make eval                  # run the evaluation harness across all fault scenari
 
 ## Configuration
 
-`incident-copilot -role control-plane` reads its configuration from environment variables. It serves the Alertmanager webhook at `/webhook/alertmanager`, and Alertmanager must send `Authorization: Bearer <IC_ALERTMANAGER_TOKEN>`. The `sensor` and `executor` roles are not implemented yet.
+`incident-copilot -role control-plane` reads its configuration from environment variables. It serves the Alertmanager webhook at `/webhook/alertmanager`, and Alertmanager must send `Authorization: Bearer <IC_ALERTMANAGER_TOKEN>`. It also serves the Sensor link at `/link/`. `incident-copilot -role sensor` dials out to it; `make sensor` deploys one into `ic-target`. The `executor` role is not implemented yet.
 
 For local runs, copy [`.env.demo.example`](.env.demo.example) to `.env.demo`, which is gitignored, and fill in the secrets. `make control-plane` turns `.env.demo` into the `incident-copilot-env` Secret in `ic-control-plane`. Without `IC_GITHUB_REPO` and `IC_GITHUB_TOKEN`, the Control plane starts with a fake ticketing adapter that only logs tickets, and it logs that it did.
 
@@ -191,6 +191,11 @@ The Control plane rejects a request body over 1 MiB with `413`. It cuts each lab
 | `IC_GITHUB_API_URL` | `https://api.github.com` | GitHub REST API base URL |
 | `IC_GITHUB_REPO` | unset | `owner/name` of the repository that gets one issue per Incident. Set it with `IC_GITHUB_TOKEN`, or leave both unset for the fake ticketing adapter |
 | `IC_GITHUB_TOKEN` | unset | Token allowed to create issues and comments in `IC_GITHUB_REPO` |
+| `IC_LOCATIONS` | unset | Control plane: comma-separated `name:environment:token` entries, one per Location. A Sensor whose Location is not listed is refused |
+| `IC_DEBUG_ADDR` | `127.0.0.1:8081` | Control plane: unauthenticated debug listener for Evidence queries and Location status. Keep it on loopback |
+| `IC_SENSOR_LOCATION` | required (Sensor) | Location this Sensor serves |
+| `IC_CONTROL_PLANE_URL` | required (Sensor) | Control plane address the Sensor dials |
+| `IC_SENSOR_TOKEN` | required (Sensor) | The token `IC_LOCATIONS` holds for this Location |
 
 ## Design choices
 

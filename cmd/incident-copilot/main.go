@@ -117,14 +117,7 @@ func runControlPlane(ctx context.Context, logger *slog.Logger) error {
 	<-hubDone // releases held polls, which Shutdown would otherwise wait for
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return errors.Join(ignoreClosed(srv.Shutdown(shutdown)), ignoreClosed(debug.Shutdown(shutdown)))
-}
-
-func ignoreClosed(err error) error {
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
-	}
-	return err
+	return errors.Join(srv.Shutdown(shutdown), debug.Shutdown(shutdown))
 }
 
 func runSensor(ctx context.Context, logger *slog.Logger) error {

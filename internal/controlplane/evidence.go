@@ -55,16 +55,17 @@ func (e *Evidence) Query(ctx context.Context, incident int64, q evidence.Query) 
 	ctx, cancel := context.WithTimeout(ctx, evidence.CallDeadline)
 	defer cancel()
 	answer, err := e.link.Call(ctx, ref.Location, evidence.Call{ID: ref.CallID, Query: q})
-	if err == nil && answer.Error != "" {
-		err = fmt.Errorf("%s: %s", q.Tool, answer.Error)
-	}
 
-	entry := map[string]any{"ref": ref, "tool": q.Tool, "outcome": "ok"}
-	if err != nil {
+	entry := map[string]any{"ref": ref, "tool": q.Tool}
+	switch {
+	case err != nil:
 		entry["outcome"], entry["error"] = "error", err.Error()
-	} else {
+	case answer.Error != "": // the Sensor's text is unredacted too, so it stays out
+		entry["outcome"] = "tool_error"
+		err = fmt.Errorf("%s: %s", q.Tool, answer.Error)
+	default:
 		sum := sha256.Sum256(answer.Data)
-		entry["bytes"], entry["sha256"] = len(answer.Data), hex.EncodeToString(sum[:])
+		entry["outcome"], entry["bytes"], entry["sha256"] = "ok", len(answer.Data), hex.EncodeToString(sum[:])
 	}
 	if aerr := e.audit.Append(e.now(), "evidence.query", incident, entry); aerr != nil {
 		return evidence.Result{}, aerr
@@ -92,8 +93,8 @@ func (e *Evidence) Locations() []LocationStatus {
 }
 
 // DebugHandler lets an operator run Evidence queries by hand until the RCA
-// loop does (#48). It has no authentication, so main serves it on loopback
-// only, away from the port Signal sources and Sensors reach.
+// loop does (#48). It has no authentication, so it stays off the port Signal
+// sources and Sensors reach, and IC_DEBUG_ADDR defaults to loopback.
 func (e *Evidence) DebugHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /debug/evidence", func(w http.ResponseWriter, r *http.Request) {
