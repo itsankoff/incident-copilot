@@ -1,5 +1,5 @@
 // Command incident-copilot is the incident responder. One binary runs one of
-// three roles: control-plane, sensor, or executor. Only control-plane exists yet.
+// three roles: control-plane, sensor, or executor. The executor does not exist yet.
 package main
 
 import (
@@ -19,6 +19,9 @@ import (
 	"github.com/itsankoff/incident-copilot/internal/audit"
 	"github.com/itsankoff/incident-copilot/internal/controlplane"
 	"github.com/itsankoff/incident-copilot/internal/github"
+	"github.com/itsankoff/incident-copilot/internal/kubernetes"
+	"github.com/itsankoff/incident-copilot/internal/link"
+	"github.com/itsankoff/incident-copilot/internal/sensor"
 	"github.com/itsankoff/incident-copilot/internal/signal"
 	"github.com/itsankoff/incident-copilot/internal/store"
 )
@@ -41,7 +44,9 @@ func main() {
 	switch *role {
 	case "control-plane":
 		err = runControlPlane(ctx, logger)
-	case "sensor", "executor":
+	case "sensor":
+		err = runSensor(ctx, logger)
+	case "executor":
 		err = fmt.Errorf("role %s: not implemented", *role)
 	default:
 		err = fmt.Errorf("role: want control-plane | sensor | executor, got %q", *role)
@@ -80,21 +85,52 @@ func runControlPlane(ctx context.Context, logger *slog.Logger) error {
 	}
 	cp := controlplane.New(alertmanager.New([]signal.Source{cfg.Alertmanager}), st, tickets, log, time.Now)
 
-	srv := &http.Server{Addr: cfg.ListenAddr, Handler: cp.Handler(), ReadHeaderTimeout: 5 * time.Second}
-	errc := make(chan error, 1)
+	tokens := map[string]string{}
+	for _, l := range cfg.Locations {
+		tokens[l.Name] = l.Token
+	}
+	hub := link.NewHub(tokens, log, time.Now)
+	ev := controlplane.NewEvidence(cfg.Locations, hub, log, time.Now)
+
+	mux := http.NewServeMux()
+	mux.Handle("/link/", hub.Handler())
+	mux.Handle("/", cp.Handler())
+	srv := &http.Server{Addr: cfg.ListenAddr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	debug := &http.Server{Addr: cfg.DebugAddr, Handler: ev.DebugHandler(), ReadHeaderTimeout: 5 * time.Second}
+	errc := make(chan error, 3)
 	go func() { errc <- srv.ListenAndServe() }()
-	logger.Info("control plane listening", "addr", cfg.ListenAddr, "source", cfg.Alertmanager.Instance, "repo", repo)
+	go func() { errc <- debug.ListenAndServe() }()
+	hubDone := make(chan struct{})
+	go func() {
+		defer close(hubDone)
+		if err := hub.Run(ctx); err != nil {
+			errc <- err
+		}
+	}()
+	logger.Info("control plane listening", "addr", cfg.ListenAddr, "source", cfg.Alertmanager.Instance, "repo", repo, "locations", len(cfg.Locations))
 
 	select {
 	case err := <-errc:
 		return err
 	case <-ctx.Done():
 	}
+	<-hubDone // releases held polls, which Shutdown would otherwise wait for
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	return errors.Join(srv.Shutdown(shutdown), debug.Shutdown(shutdown))
+}
+
+func runSensor(ctx context.Context, logger *slog.Logger) error {
+	cfg, err := sensor.LoadConfig(os.Getenv)
+	if err != nil {
 		return err
 	}
+	tools, err := kubernetes.InCluster()
+	if err != nil {
+		return err
+	}
+	logger.Info("sensor dialing", "location", cfg.Location, "controlPlane", cfg.ControlPlaneURL)
+	sensor.New(link.NewClient(cfg.ControlPlaneURL, cfg.Location, cfg.Token), tools, logger).Run(ctx)
 	return nil
 }
 
