@@ -108,7 +108,22 @@ Every investigation records its model, prompt, and Runbook versions, so it can b
 
 ## Demo environment
 
-Two local [kind](https://kind.sigs.k8s.io) clusters run the demo the way incident-copilot runs in production. The Target cluster `ic-target` runs a small Go service alongside Prometheus, Loki, and Alertmanager. The cluster `ic-control-plane` runs the incident-copilot Control plane. Alerts travel from `ic-target` to the Control plane, and nothing connects into `ic-target`. The service has injectable faults that cover the common categories of real incidents:
+Two local [kind](https://kind.sigs.k8s.io) clusters run the demo the way incident-copilot runs in production. The Target cluster `ic-target` runs a small Go service alongside Prometheus, Loki, and Alertmanager. The cluster `ic-control-plane` runs the incident-copilot Control plane. Alerts travel from `ic-target` to the Control plane, and nothing connects into `ic-target`.
+
+```mermaid
+flowchart LR
+    subgraph T[kind-ic-target]
+        APP[demo: orders, inventory, loadgen]
+        AM[monitoring: Alertmanager]
+    end
+    subgraph C[kind-ic-control-plane]
+        CP[incident-copilot: Control plane + SQLite PVC]
+    end
+    AM -- "Bearer token<br/>ic-control-plane-control-plane:30080<br/>/webhook/alertmanager" --> CP
+    CP -- issues --> GH[GitHub Issues, or the fake adapter]
+```
+
+The full topology, with namespaces and networking, is in [`docs/design/demo-environment.md`](docs/design/demo-environment.md#topology). The service has injectable faults that cover the common categories of real incidents:
 
 | Fault | Symptom | Expected remediation |
 |---|---|---|
