@@ -1,0 +1,69 @@
+# The Sensor for Location ic-target. It dials out to the Control plane's NodePort
+# at the node's container name on kind's Docker network, and has no Service:
+# nothing connects into ic-target.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sensor
+  labels: { app.kubernetes.io/name: sensor, app.kubernetes.io/part-of: incident-copilot }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: sensor }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: sensor, app.kubernetes.io/part-of: incident-copilot }
+    spec:
+      serviceAccountName: sensor
+      securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532 }
+      containers:
+        - name: sensor
+          image: incident-copilot
+          args: ["-role=sensor"]
+          # IC_SENSOR_TOKEN
+          envFrom:
+            - secretRef: { name: incident-copilot-sensor }
+          env:
+            - { name: IC_SENSOR_LOCATION, value: ic-target }
+            - { name: IC_CONTROL_PLANE_URL, value: "http://ic-control-plane-control-plane:30080" }
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits: { memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sensor
+---
+# Read-only, cluster-wide for now: #52 narrows it and adds the namespace allowlist.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: incident-copilot-sensor
+rules:
+  - apiGroups: [""]
+    resources: [pods, events]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets, statefulsets, daemonsets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: incident-copilot-sensor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: incident-copilot-sensor
+subjects:
+  - kind: ServiceAccount
+    name: sensor
+    namespace: incident-copilot

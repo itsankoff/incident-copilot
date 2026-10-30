@@ -98,3 +98,26 @@ func TestLoadConfigRotationTokens(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadConfigLocations(t *testing.T) {
+	env := required()
+	env["IC_LOCATIONS"] = "ic-target:staging:t:1,aks-prod:production:t2"
+	cfg, err := LoadConfig(envMap(env))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	want := []Location{{"ic-target", "staging", "t:1"}, {"aks-prod", "production", "t2"}}
+	if !slices.Equal(cfg.Locations, want) {
+		t.Errorf("Locations = %+v, want %+v", cfg.Locations, want)
+	}
+
+	for _, bad := range []string{"no-environment", "a::secret-token", ":e:secret-token", "a:e:", "a:e:secret-token,a:f:secret-token"} {
+		env["IC_LOCATIONS"] = bad
+		_, err := LoadConfig(envMap(env))
+		if err == nil {
+			t.Errorf("IC_LOCATIONS=%q: want an error", bad)
+		} else if strings.Contains(err.Error(), "secret-token") {
+			t.Errorf("IC_LOCATIONS=%q: token in error: %v", bad, err)
+		}
+	}
+}

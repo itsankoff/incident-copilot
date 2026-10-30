@@ -24,6 +24,10 @@ GRAFANA ?= 1
 # accepts. Local demo only: set your own to override, for both make observability
 # and make control-plane.
 IC_ALERTMANAGER_TOKEN ?= demo-alertmanager-token
+# The static token the Sensor in ic-target presents and the Control plane
+# accepts for Location ic-target. Local demo only: set your own to override, for
+# both make sensor and make control-plane.
+IC_SENSOR_TOKEN ?= demo-sensor-token
 OBS_DIR := deploy/observability
 
 ##@ Development
@@ -133,8 +137,8 @@ control-plane: ## Build incident-copilot, load it into ic-control-plane, and dep
 	docker build --build-arg BIN=incident-copilot --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(CP_IMAGE) .
 	kind load docker-image $(CP_IMAGE) --name $(CONTROL_PLANE_CLUSTER)
 	@rm -rf build/control-plane && mkdir -p build/control-plane
-	@# IC_ALERTMANAGER_TOKEN comes from the Makefile, so it matches ic-target's.
-	@if [ -f .env.demo ]; then grep -v '^IC_ALERTMANAGER_TOKEN=' .env.demo > build/control-plane/.env.demo || true; \
+	@# IC_ALERTMANAGER_TOKEN and IC_LOCATIONS come from the Makefile, so they match ic-target's.
+	@if [ -f .env.demo ]; then grep -vE '^(IC_ALERTMANAGER_TOKEN|IC_LOCATIONS)=' .env.demo > build/control-plane/.env.demo || true; \
 	else echo "no .env.demo: the Control plane starts with the fake ticketing adapter"; touch build/control-plane/.env.demo; fi
 	@printf '%s\n' \
 	  'apiVersion: kustomize.config.k8s.io/v1beta1' \
@@ -145,17 +149,36 @@ control-plane: ## Build incident-copilot, load it into ic-control-plane, and dep
 	  '  - name: incident-copilot-env' \
 	  '    namespace: incident-copilot' \
 	  '    envs: [.env.demo]' \
-	  '    literals: ["IC_ALERTMANAGER_TOKEN=$(IC_ALERTMANAGER_TOKEN)"]' \
+	  '    literals: ["IC_ALERTMANAGER_TOKEN=$(IC_ALERTMANAGER_TOKEN)", "IC_LOCATIONS=$(TARGET_CLUSTER):demo:$(IC_SENSOR_TOKEN)"]' \
 	  > build/control-plane/kustomization.yaml
 	$(CP_KUBECTL) apply -k build/control-plane
 	$(CP_KUBECTL) -n incident-copilot rollout status deploy/control-plane --timeout 180s
 
+.PHONY: sensor
+sensor: ## Build incident-copilot, load it into ic-target, and deploy the Sensor, which dials out to the Control plane
+	docker build --build-arg BIN=incident-copilot --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(CP_IMAGE) .
+	kind load docker-image $(CP_IMAGE) --name $(TARGET_CLUSTER)
+	@rm -rf build/sensor && mkdir -p build/sensor
+	@printf '%s\n' \
+	  'apiVersion: kustomize.config.k8s.io/v1beta1' \
+	  'kind: Kustomization' \
+	  'resources: [../../deploy/sensor]' \
+	  'images: [{name: incident-copilot, newName: incident-copilot, newTag: "$(VERSION)"}]' \
+	  'secretGenerator:' \
+	  '  - name: incident-copilot-sensor' \
+	  '    namespace: incident-copilot' \
+	  '    literals: ["IC_SENSOR_TOKEN=$(IC_SENSOR_TOKEN)"]' \
+	  > build/sensor/kustomization.yaml
+	$(TARGET_KUBECTL) apply -k build/sensor
+	$(TARGET_KUBECTL) -n incident-copilot rollout status deploy/sensor --timeout 180s
+
 .PHONY: status
-status: ## Show pods in ic-target (demo, monitoring, logging) and ic-control-plane (incident-copilot)
+status: ## Show pods in ic-target (demo, monitoring, logging, incident-copilot) and ic-control-plane (incident-copilot)
 	@echo "== $(TARGET_CLUSTER)"
 	$(TARGET_KUBECTL) get pods -n demo -o wide
 	$(TARGET_KUBECTL) get pods -n monitoring
 	$(TARGET_KUBECTL) get pods -n logging
+	$(TARGET_KUBECTL) get pods -n incident-copilot
 	@echo "== $(CONTROL_PLANE_CLUSTER)"
 	$(CP_KUBECTL) get pods -n incident-copilot
 

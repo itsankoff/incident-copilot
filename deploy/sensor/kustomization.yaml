@@ -1,0 +1,9 @@
+# The incident-copilot Sensor in ic-target. `make sensor` applies this through a
+# generated overlay (build/sensor) that sets the image tag and generates the
+# incident-copilot-sensor Secret.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: incident-copilot
+resources:
+  - namespace.yaml
+  - sensor.yaml
