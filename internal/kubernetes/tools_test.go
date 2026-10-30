@@ -8,6 +8,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -132,6 +133,47 @@ func TestEventsCoverTheTargetAndItsPodsInsideTheWindow(t *testing.T) {
 	}
 	if got[0].Reason != "BackOff" || got[0].Kind != "Pod" || got[0].Name != "orders-abc-1" {
 		t.Errorf("event = %+v", got[0])
+	}
+}
+
+func TestCronJobPodsAreFoundThroughItsJobs(t *testing.T) {
+	c := fake.NewClientset(
+		&batchv1.CronJob{ObjectMeta: meta("nightly", "cj-1", nil)},
+		&batchv1.Job{ObjectMeta: meta("nightly-1", "job-1", owner("CronJob", "nightly", "cj-1"))},
+		&corev1.Pod{ObjectMeta: meta("nightly-1-x", "pod-1", owner("Job", "nightly-1", "job-1"))},
+		&corev1.Pod{ObjectMeta: meta("other", "pod-2", owner("Job", "other", "job-2"))},
+	)
+	target := signal.Target{Namespace: "demo", Kind: "CronJob", Name: "nightly"}
+	raw, err := Tools(c)[0].Run(context.Background(), evidence.Query{Target: target})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Pods []struct {
+			Name string `json:"name"`
+		} `json:"pods"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Pods) != 1 || got.Pods[0].Name != "nightly-1-x" {
+		t.Errorf("pods = %+v, want only nightly-1-x", got.Pods)
+	}
+}
+
+// A recurring event from a new-style writer keeps EventTime at its first
+// occurrence and moves Series.LastObservedTime.
+func TestRecurringEventIsDatedByItsLastOccurrence(t *testing.T) {
+	e := event("recurring", "Deployment", "orders", time.Time{})
+	e.EventTime = metav1.NewMicroTime(t0.Add(-3 * time.Hour))
+	e.Series = &corev1.EventSeries{Count: 9, LastObservedTime: metav1.NewMicroTime(t0.Add(-time.Minute))}
+	c := fake.NewClientset(&appsv1.Deployment{ObjectMeta: meta("orders", "dep-1", nil)}, e)
+	raw, err := Tools(c)[1].Run(context.Background(), evidence.Query{Target: orders, Window: evidence.Window{Start: t0.Add(-time.Hour), End: t0}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "recurring") {
+		t.Errorf("events = %s, want the recurring event", raw)
 	}
 }
 

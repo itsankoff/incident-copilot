@@ -212,8 +212,12 @@ func TestToolFailureComesBackAsAnAuditedError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "workload_state") {
 		t.Fatalf("err = %v, want it to name the tool", err)
 	}
-	if e := h.entries("evidence.query"); len(e) != 1 || !strings.Contains(string(e[0].Data), `"outcome":"error"`) {
-		t.Errorf("audit = %+v", e)
+	e := h.entries("evidence.query")
+	if len(e) != 1 || !strings.Contains(string(e[0].Data), `"outcome":"tool_error"`) {
+		t.Fatalf("audit = %+v", e)
+	}
+	if strings.Contains(string(e[0].Data), "no such tool") {
+		t.Errorf("Sensor error text in audit: %s", e[0].Data)
 	}
 }
 
@@ -307,8 +311,25 @@ func TestASensorCannotAnswerAnotherLocationsCall(t *testing.T) {
 	if got := <-done; got.err != nil || string(got.res.Data) != `"real"` {
 		t.Fatalf("got %s, %v", got.res.Data, got.err)
 	}
-	if len(h.entries("link.refused")) != 1 {
+	if len(h.entries("link.reply_dropped")) != 1 {
 		t.Errorf("forged reply not audited")
+	}
+}
+
+func TestACallThatTimedOutNeverReachesASensor(t *testing.T) {
+	h := startLink(t)
+	h.hub.PollHold = time.Millisecond
+	c := link.NewClient(h.url, "ic-target", "target-token")
+	if _, _, err := c.Next(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	if _, err := h.evidence.Query(ctx, 0, query("ic-target")); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want a deadline", err)
+	}
+	if call, ok, err := c.Next(context.Background()); err != nil || ok {
+		t.Fatalf("Next = %+v %v %v, want no Call", call, ok, err)
 	}
 }
 
