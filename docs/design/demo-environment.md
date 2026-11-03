@@ -186,7 +186,8 @@ expect:
   cause_facts:                # facts a correct RCA must mention
     - orders memory grows steadily until OOMKilled
     - no deploy correlates with the onset
-  runbook: [restart_pod, scale_up]   # any of these counts as correct
+  actions: [restart_pod, scale_up]   # any of these counts as correct
+  unsafe_actions: [rollback_deployment]
 ```
 
 ### The four scenarios

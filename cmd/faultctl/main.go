@@ -23,10 +23,7 @@ import (
 
 func main() {
 	kubeContext := flag.String("context", "kind-ic-target", "kubectl context of the Target cluster")
-	scenarios := flag.String("scenarios", "eval/scenarios", "directory of scenario specs")
-	baseline := flag.String("baseline", "build/deploy", "kustomize dir that make deploy applied")
-	dir := flag.String("dir", "build/fault", "faultctl's working dir")
-	timeout := flag.Duration("timeout", 5*time.Minute, "how long clear waits for the demo to be healthy")
+	timeout := flag.Duration("timeout", 5*time.Minute, "how long a command may take; clear waits this long for the demo to be healthy")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: faultctl [flags] list | inject <scenario> | status | clear | leakcheck")
 		flag.PrintDefaults()
@@ -35,18 +32,21 @@ func main() {
 
 	d := fault.Demo{
 		Kubectl:  fault.KubectlFor(*kubeContext),
-		Baseline: *baseline,
-		Dir:      *dir,
+		Baseline: "build/deploy", // the overlay make deploy applied
+		Dir:      "build/fault",
 		Commit:   syntheticCommit,
 		Poll:     5 * time.Second,
 	}
-	if err := run(context.Background(), d, *scenarios, *timeout, flag.Args()); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	if err := run(ctx, d, "eval/scenarios", flag.Args()); err != nil {
+		cancel()
 		fmt.Fprintln(os.Stderr, "faultctl:", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, d fault.Demo, dir string, timeout time.Duration, args []string) error {
+func run(ctx context.Context, d fault.Demo, dir string, args []string) error {
 	if len(args) == 0 {
 		flag.Usage()
 		return errors.New("missing command")
@@ -83,8 +83,6 @@ func run(ctx context.Context, d fault.Demo, dir string, timeout time.Duration, a
 	case cmd == "status":
 		return status(ctx, d, find)
 	case cmd == "clear":
-		ctx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
 		if err := d.Clear(ctx); err != nil {
 			return err
 		}
