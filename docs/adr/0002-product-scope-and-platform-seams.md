@@ -110,7 +110,7 @@ Five Detectors run in every Sensor in a Kubernetes Location, read only the Kuber
 | OOMKilled | at once, when a live container's last termination is `OOMKilled` and its restart count went up | no new OOM kill on live pods for 15 min | critical |
 | Stuck rollout | a Deployment has `Progressing=False`, reason `ProgressDeadlineExceeded` | `Progressing=True`, reason `NewReplicaSetAvailable` | warning |
 | ImagePullBackOff | a live container has been waiting `ImagePullBackOff` or `ErrImagePull` for ≥ 2 min | none in either state for 1 min | warning |
-| FailedScheduling | a live pod has had `PodScheduled=False`, reason `Unschedulable`, for ≥ 5 min | no live pod unschedulable for 1 min | warning |
+| FailedScheduling | a live pod has had `PodScheduled=False`, reason `Unschedulable`, for ≥ 3 min | no live pod unschedulable for 1 min | warning |
 
 - **Target.** Each Detector resolves its Target by following controller owners to the top one, whatever its kind (Deployment, StatefulSet, DaemonSet, CronJob, a bare Job or ReplicaSet, an Argo `Rollout`, an operator CRD, or a Pod with no owner).
 - **Liveness.** The Sensor re-sends every firing Detector Signal every 5 minutes, so a dead Sensor's Detector Signals expire after 10 minutes instead of hanging open.

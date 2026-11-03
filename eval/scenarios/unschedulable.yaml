@@ -15,10 +15,10 @@ inject:
                 requests: { cpu: "32" }
                 limits: { cpu: "32" }
 expect:
-  # PodUnschedulable needs 5 min of Pending (as the Detector will), so it fires
-  # just after 5 min; DeploymentRolloutStuck fires first.
+  # PodUnschedulable needs 3 min of Pending (as the Detector will);
+  # DeploymentRolloutStuck fires first.
   alerts: [DeploymentRolloutStuck, PodUnschedulable]
-  alert_within: 6m
+  alert_within: 5m
   cause: insufficient_resources
   cause_facts:
     - a rollout of orders raised its CPU request to 32

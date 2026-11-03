@@ -75,7 +75,7 @@ spec:
               (kube_pod_status_unschedulable == 1)
               * on (namespace, pod) group_left (deployment) namespace_deployment_pod:kube_pod_owner:relabel
             )
-          for: 5m
+          for: 3m
           labels: { severity: warning }
           annotations:
             summary: "A pod of {{ $labels.namespace }}/{{ $labels.deployment }} cannot be scheduled."
