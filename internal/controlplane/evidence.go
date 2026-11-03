@@ -36,6 +36,10 @@ func NewEvidence(locations []Location, l Link, log *audit.Log, now func() time.T
 	return &Evidence{locations: locations, link: l, audit: log, now: now}
 }
 
+// errAudit marks a query whose audit entry could not be written: the call
+// ran, but nothing may use its answer.
+var errAudit = errors.New("audit")
+
 // defaultWindow is what a query reads when it names no window.
 const defaultWindow = time.Hour
 
@@ -69,7 +73,7 @@ func (e *Evidence) Query(ctx context.Context, incident int64, q evidence.Query) 
 		entry["outcome"], entry["bytes"], entry["sha256"] = "ok", len(answer.Data), hex.EncodeToString(sum[:])
 	}
 	if aerr := e.audit.Append(e.now(), "evidence.query", incident, entry); aerr != nil {
-		return evidence.Result{Ref: ref}, aerr
+		return evidence.Result{Ref: ref}, fmt.Errorf("%w: %w", errAudit, aerr)
 	}
 	if err != nil {
 		return evidence.Result{Ref: ref}, err

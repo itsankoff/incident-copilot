@@ -224,7 +224,7 @@ func TestGate1CatchesARefFromAnotherIncidentAndAFailedCall(t *testing.T) {
 		t.Errorf("%d Gate 1 failures, want 3 (c1, c2, c4):\n%s", n, body)
 	}
 	gates := ofType(h.auditLog(), "gate1.rca")
-	if len(gates) != 2 || !strings.Contains(string(gates[1].Data), `"passed":false`) || gates[1].Incident != 2 {
+	if len(gates) != 2 || !strings.Contains(string(gates[1].Data), `"passed":false`) || !strings.Contains(string(gates[1].Data), `"confidence":"low"`) || gates[1].Incident != 2 {
 		t.Errorf("gate1.rca audit = %+v", gates)
 	}
 }

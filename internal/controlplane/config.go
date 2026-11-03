@@ -41,7 +41,6 @@ type GitHub struct {
 
 // LLM is the RCA loop's model and budgets. OpenRouter is the only provider.
 type LLM struct {
-	APIURL string
 	Key    string
 	Model  string // configured; with openrouter/free each answer names its own model
 	Budget Budget
@@ -87,7 +86,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("IC_GITHUB_REPO and IC_GITHUB_TOKEN: set both, or neither for the fake ticketing adapter")
 	}
 	if key := getenv("OPENROUTER_API_KEY"); key != "" {
-		cfg.LLM = &LLM{APIURL: env("IC_LLM_API_URL", "https://openrouter.ai/api/v1"), Key: key, Model: env("IC_LLM_MODEL", "openrouter/free")}
+		cfg.LLM = &LLM{Key: key, Model: env("IC_LLM_MODEL", "openrouter/free")}
 		// Conservative defaults until the eval harness tunes them.
 		b := &cfg.LLM.Budget
 		var err error

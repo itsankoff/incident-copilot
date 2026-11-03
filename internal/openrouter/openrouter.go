@@ -17,6 +17,9 @@ import (
 	"github.com/itsankoff/incident-copilot/internal/llm"
 )
 
+// APIURL is OpenRouter's API base URL.
+const APIURL = "https://openrouter.ai/api/v1"
+
 type Client struct {
 	apiURL string // e.g. https://openrouter.ai/api/v1
 	key    string

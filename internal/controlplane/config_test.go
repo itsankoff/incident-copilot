@@ -140,7 +140,7 @@ func TestLoadConfigLLM(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	want := LLM{APIURL: "https://openrouter.ai/api/v1", Key: "sk-or", Model: "openrouter/free",
+	want := LLM{Key: "sk-or", Model: "openrouter/free",
 		Budget: Budget{Steps: 8, Tokens: 100_000, Time: 5 * time.Minute}}
 	if cfg.LLM == nil || *cfg.LLM != want {
 		t.Errorf("LLM = %+v, want %+v", cfg.LLM, want)
