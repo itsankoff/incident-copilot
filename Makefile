@@ -29,6 +29,8 @@ IC_ALERTMANAGER_TOKEN ?= demo-alertmanager-token
 # both make sensor and make control-plane.
 IC_SENSOR_TOKEN ?= demo-sensor-token
 OBS_DIR := deploy/observability
+# faultctl pins every kubectl call to ic-target's context.
+FAULTCTL := go run ./cmd/faultctl --context kind-$(TARGET_CLUSTER)
 
 ##@ Development
 
@@ -99,6 +101,7 @@ observability: ## Install or upgrade Prometheus, Alertmanager, Loki, and Alloy i
 	  -f $(OBS_DIR)/kube-prometheus-stack.yaml \
 	  $(if $(filter 1,$(GRAFANA)),--set grafana.enabled=true) \
 	  --wait --timeout 10m
+	$(TARGET_KUBECTL) apply -f $(OBS_DIR)/alerts.yaml
 	$(TARGET_HELM) upgrade --install loki grafana/loki \
 	  --version $(LOKI_CHART_VERSION) -n logging --create-namespace \
 	  -f $(OBS_DIR)/loki.yaml --wait --timeout 10m
@@ -131,6 +134,15 @@ deploy: image ## Deploy the demo workload (orders, inventory, loadgen) into ic-t
 	@for d in inventory orders loadgen; do \
 	  $(TARGET_KUBECTL) -n demo rollout status deploy/$$d --timeout 180s; \
 	done
+
+.PHONY: fault
+fault: ## Roll out a fault scenario to the demo in ic-target (F=<scenario>; no F lists them)
+	@[ -n "$(F)" ] || { $(FAULTCTL) list; echo "usage: make fault F=<scenario>"; exit 1; }
+	$(FAULTCTL) inject $(F)
+
+.PHONY: clear
+clear: ## Restore the demo's baseline in ic-target and wait until all pods are Ready and no alerts fire
+	$(FAULTCTL) clear
 
 .PHONY: control-plane
 control-plane: ## Build incident-copilot, load it into ic-control-plane, and deploy the Control plane with Secrets from .env.demo

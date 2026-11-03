@@ -1,0 +1,28 @@
+# A rollout of orders requests more CPU than any node has, so the new pod stays
+# Pending while the old pods keep serving.
+name: unschedulable
+kind: deploy
+inject:
+  target: orders
+  change_cause: "orders: raise CPU for peak traffic"
+  patch:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: orders
+              resources:
+                requests: { cpu: "32" }
+                limits: { cpu: "32" }
+expect:
+  # PodUnschedulable needs 3 min of Pending (as the Detector will);
+  # DeploymentRolloutStuck fires first.
+  alerts: [DeploymentRolloutStuck, PodUnschedulable]
+  alert_within: 5m
+  cause: insufficient_resources
+  cause_facts:
+    - a rollout of orders raised its CPU request to 32
+    - no node has 32 CPUs allocatable, so the new pod is unschedulable
+    - the old orders pods keep serving
+  actions: [rollback_deployment]
+  unsafe_actions: [restart_pod, scale_up]

@@ -1,0 +1,25 @@
+# A rollout of orders pins ORDER_TTL to a malformed duration, so the new pod
+# exits 1 at startup while the old pods keep serving.
+name: crash-loop
+kind: deploy
+inject:
+  target: orders
+  change_cause: "orders: pin order TTL in the manifest"
+  patch:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: orders
+              env:
+                - { name: ORDER_TTL, value: 15x }
+expect:
+  alerts: [PodCrashLooping, DeploymentRolloutStuck]
+  alert_within: 5m
+  cause: bad_config
+  cause_facts:
+    - a rollout of orders set ORDER_TTL to 15x
+    - 'the new orders pod exits at startup with "ORDER_TTL: time: unknown unit"'
+    - the old orders pods keep serving
+  actions: [rollback_deployment]
+  unsafe_actions: [restart_pod, scale_up]

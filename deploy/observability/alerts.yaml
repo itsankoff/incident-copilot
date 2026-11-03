@@ -1,0 +1,81 @@
+# Workload alerts for the five problems the built-in Detectors will cover
+# (ADR 0002 D5), on kube-state-metrics. `make observability` applies this.
+#
+# Every alert names its Deployment Target: pod-level metrics carry only `pod`,
+# so each rule joins through kube_pod_owner and kube_replicaset_owner (the
+# recording rule below) and aggregates by (namespace, deployment), one alert
+# per Target, never per pod. Alerts carry no hints about the cause.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: workload-alerts
+  namespace: monitoring
+spec:
+  groups:
+    - name: workload
+      rules:
+        # 1 for every pod owned by a Deployment's ReplicaSet, labelled with the
+        # Deployment. Rules later in this group read this evaluation's result.
+        - record: namespace_deployment_pod:kube_pod_owner:relabel
+          expr: |
+            max by (namespace, deployment, pod) (
+              label_replace(kube_pod_owner{owner_kind="ReplicaSet"}, "replicaset", "$1", "owner_name", "(.+)")
+              * on (namespace, replicaset) group_left (deployment)
+              label_replace(max by (namespace, replicaset, owner_name) (kube_replicaset_owner{owner_kind="Deployment"}), "deployment", "$1", "owner_name", "(.+)")
+            )
+
+        - alert: PodCrashLooping
+          expr: |
+            max by (namespace, deployment) (
+              max by (namespace, pod) (kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"} == 1)
+              * on (namespace, pod) group_left (deployment) namespace_deployment_pod:kube_pod_owner:relabel
+            )
+          for: 1m
+          labels: { severity: critical }
+          annotations:
+            summary: "A container of {{ $labels.namespace }}/{{ $labels.deployment }} is in CrashLoopBackOff."
+
+        - alert: ContainerOOMKilled
+          expr: |
+            max by (namespace, deployment) (
+              max by (namespace, pod) (
+                (kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1)
+                and on (namespace, pod, container)
+                (increase(kube_pod_container_status_restarts_total[10m]) > 0)
+              )
+              * on (namespace, pod) group_left (deployment) namespace_deployment_pod:kube_pod_owner:relabel
+            )
+          labels: { severity: critical }
+          annotations:
+            summary: "A container of {{ $labels.namespace }}/{{ $labels.deployment }} was OOMKilled and restarted."
+
+        - alert: DeploymentRolloutStuck
+          expr: |
+            max by (namespace, deployment) (
+              kube_deployment_status_condition{condition="Progressing", status="false", reason="ProgressDeadlineExceeded"}
+            ) == 1
+          labels: { severity: warning }
+          annotations:
+            summary: "The rollout of {{ $labels.namespace }}/{{ $labels.deployment }} exceeded its progress deadline."
+
+        - alert: PodImagePullBackOff
+          expr: |
+            max by (namespace, deployment) (
+              max by (namespace, pod) (kube_pod_container_status_waiting_reason{reason=~"ImagePullBackOff|ErrImagePull"} == 1)
+              * on (namespace, pod) group_left (deployment) namespace_deployment_pod:kube_pod_owner:relabel
+            )
+          for: 2m
+          labels: { severity: warning }
+          annotations:
+            summary: "A container of {{ $labels.namespace }}/{{ $labels.deployment }} cannot pull its image."
+
+        - alert: PodUnschedulable
+          expr: |
+            max by (namespace, deployment) (
+              (kube_pod_status_unschedulable == 1)
+              * on (namespace, pod) group_left (deployment) namespace_deployment_pod:kube_pod_owner:relabel
+            )
+          for: 3m
+          labels: { severity: warning }
+          annotations:
+            summary: "A pod of {{ $labels.namespace }}/{{ $labels.deployment }} cannot be scheduled."
