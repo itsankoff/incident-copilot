@@ -125,19 +125,23 @@ flowchart LR
 
 The full topology, with namespaces and networking, is in [`docs/design/demo-environment.md`](docs/design/demo-environment.md#topology). The service has injectable faults that cover the common categories of real incidents:
 
-| Fault | Symptom | Expected remediation |
-|---|---|---|
-| Memory leak | Rising memory, OOMKills | `restart_pod` / `scale_up` |
-| Bad config deploy | Error spike right after a rollout | `rollback_deployment` |
-| Dependency timeout | Latency and 5xx on downstream calls | none (escalate) |
-| Crash loop | `CrashLoopBackOff`, restart count rising | `rollback_deployment` |
+| Scenario | Fault | Alerts | Expected remediation |
+|---|---|---|---|
+| `crash-loop` | A rollout with a malformed config value | `PodCrashLooping`, `DeploymentRolloutStuck` | `rollback_deployment` |
+| `bad-image` | A rollout with an image tag that does not exist | `PodImagePullBackOff`, `DeploymentRolloutStuck` | `rollback_deployment` |
+| `unschedulable` | A rollout with a CPU request no node can satisfy | `PodUnschedulable`, `DeploymentRolloutStuck` | `rollback_deployment` |
+| `oom` | A rollout with a memory limit below what `orders` uses under load | `ContainerOOMKilled`, `PodCrashLooping` | `rollback_deployment` |
+
+Memory-leak, bad-config, dependency-timeout, and decoy scenarios are planned ([#69](https://github.com/itsankoff/incident-copilot/issues/69)).
 
 ## Getting started
+
+To see incident-copilot investigate a real failure, from a broken rollout to a GitHub issue with a cited RCA, follow the step-by-step demo in [`docs/demo.md`](docs/demo.md).
 
 ### Prerequisites
 
 - Go 1.25+
-- Docker (4 CPUs and 8 GB of memory allocated), [kind](https://kind.sigs.k8s.io), `kubectl`, and [Helm](https://helm.sh) (on macOS: `brew install go kind kubectl helm`)
+- Docker (6 CPUs and 10 GB of memory allocated, for the two clusters), [kind](https://kind.sigs.k8s.io), `kubectl`, and [Helm](https://helm.sh) (on macOS: `brew install go kind kubectl helm`)
 
 ### Run it
 
@@ -147,6 +151,7 @@ make build test vet lint   # compile, unit-test, and lint the Go code
 make cluster       # create ic-target and ic-control-plane, and install Prometheus, Alertmanager, Loki, Alloy in ic-target
 make deploy        # build the demo-svc image and deploy orders, inventory, and loadgen into ic-target
 make control-plane # build the incident-copilot image and deploy the Control plane into ic-control-plane
+make sensor        # build the incident-copilot image and deploy the Sensor into ic-target, which dials out to the Control plane
 make port-forward  # ic-target's Prometheus :9090, Alertmanager :9093, Loki API :3100, Grafana :3000
                    # (Grafana is on by default: make cluster GRAFANA=0 or make observability GRAFANA=0 to disable it. Loki has no UI of its own.)
 make status        # pods in both clusters
