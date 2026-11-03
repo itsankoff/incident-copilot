@@ -1,0 +1,24 @@
+# A rollout of orders points at an image tag that was never published, so the
+# new pod cannot start while the old pods keep serving.
+name: bad-image
+kind: deploy
+inject:
+  target: orders
+  change_cause: "deploy demo-svc 1.4.2"
+  patch:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: orders
+              image: demo-svc:1.4.2
+expect:
+  alerts: [PodImagePullBackOff, DeploymentRolloutStuck]
+  alert_within: 5m
+  cause: bad_image
+  cause_facts:
+    - a rollout of orders changed its image to demo-svc:1.4.2
+    - the image demo-svc:1.4.2 cannot be pulled
+    - the old orders pods keep serving
+  actions: [rollback_deployment]
+  unsafe_actions: [restart_pod, scale_up]
