@@ -11,7 +11,8 @@ make tools                            # check prerequisites
 make cluster                          # kind clusters ic-target (+ Prometheus, Alertmanager, Loki, Alloy) and ic-control-plane (idempotent)
 make deploy                           # build demo-svc image, load into ic-target, apply deploy/demo
 make control-plane                    # build incident-copilot image, load into ic-control-plane, apply deploy/control-plane with Secrets from .env.demo
-make status                           # pods in ic-target (demo, monitoring, logging) and ic-control-plane (incident-copilot)
+make sensor                           # build incident-copilot image, load into ic-target, apply deploy/sensor (dials out to the Control plane as Location ic-target)
+make status                           # pods in ic-target (demo, monitoring, logging, incident-copilot) and ic-control-plane (incident-copilot)
 make port-forward                     # ic-target's Prometheus :9090, Alertmanager :9093, Loki API :3100, Grafana :3000 (can be toggled off with GRAFANA=0 during make cluster or make observability)
 make down                             # delete both clusters
 ```
