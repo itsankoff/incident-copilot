@@ -192,6 +192,11 @@ The Control plane rejects a request body over 1 MiB with `413`. It cuts each lab
 | `IC_GITHUB_REPO` | unset | `owner/name` of the repository that gets one issue per Incident. Set it with `IC_GITHUB_TOKEN`, or leave both unset for the fake ticketing adapter |
 | `IC_GITHUB_TOKEN` | unset | Token allowed to create issues and comments in `IC_GITHUB_REPO` |
 | `IC_LOCATIONS` | unset | Control plane: comma-separated `name:environment:token` entries, one per Location. A Sensor whose Location is not listed is refused |
+| `OPENROUTER_API_KEY` | unset | Control plane: OpenRouter API key for the RCA loop. Unset, Incidents get tickets but are not investigated |
+| `IC_LLM_MODEL` | `openrouter/free` | Control plane: model the RCA loop asks for. With `openrouter/free` each answer may come from another free model; the audit log records which |
+| `IC_RCA_MAX_STEPS` | `8` | Control plane: LLM requests per investigation |
+| `IC_RCA_MAX_TOKENS` | `100000` | Control plane: input plus output tokens per investigation |
+| `IC_RCA_TIMEOUT` | `5m` | Control plane: wall-clock budget per investigation |
 | `IC_DEBUG_ADDR` | `127.0.0.1:8081` | Control plane: unauthenticated debug listener for Evidence queries and Location status. Keep it on loopback |
 | `IC_SENSOR_LOCATION` | required (Sensor) | Location this Sensor serves |
 | `IC_CONTROL_PLANE_URL` | required (Sensor) | Control plane address the Sensor dials |

@@ -17,12 +17,13 @@ func TestOnlyMainImportsThePlatformPackage(t *testing.T) {
 	checked := 0
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		pkg, deps, _ := strings.Cut(line, " ")
-		if pkg == module+"/cmd/incident-copilot" || pkg == module+"/internal/kubernetes" {
+		if pkg == module+"/cmd/incident-copilot" || pkg == module+"/internal/kubernetes" || pkg == module+"/internal/openrouter" {
 			continue
 		}
 		checked++
 		for _, dep := range strings.Fields(deps) {
-			if dep == module+"/internal/kubernetes" || strings.HasPrefix(dep, "k8s.io/") {
+			// The same holds for the LLM provider package (arch-diagram: LLM provider).
+			if dep == module+"/internal/kubernetes" || dep == module+"/internal/openrouter" || strings.HasPrefix(dep, "k8s.io/") {
 				t.Errorf("%s depends on %s", pkg, dep)
 			}
 		}

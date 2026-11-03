@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/itsankoff/incident-copilot/internal/signal"
 )
@@ -118,6 +119,47 @@ func TestLoadConfigLocations(t *testing.T) {
 			t.Errorf("IC_LOCATIONS=%q: want an error", bad)
 		} else if strings.Contains(err.Error(), "secret-token") {
 			t.Errorf("IC_LOCATIONS=%q: token in error: %v", bad, err)
+		}
+	}
+}
+
+// Without an OpenRouter key the Control plane opens tickets but investigates
+// nothing.
+func TestLoadConfigLLM(t *testing.T) {
+	cfg, err := LoadConfig(envMap(required()))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.LLM != nil {
+		t.Errorf("LLM = %+v, want nil without OPENROUTER_API_KEY", cfg.LLM)
+	}
+
+	env := required()
+	env["OPENROUTER_API_KEY"] = "sk-or"
+	cfg, err = LoadConfig(envMap(env))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	want := LLM{Key: "sk-or", Model: "openrouter/free",
+		Budget: Budget{Steps: 8, Tokens: 100_000, Time: 5 * time.Minute}}
+	if cfg.LLM == nil || *cfg.LLM != want {
+		t.Errorf("LLM = %+v, want %+v", cfg.LLM, want)
+	}
+
+	env["IC_LLM_MODEL"], env["IC_RCA_MAX_STEPS"], env["IC_RCA_MAX_TOKENS"], env["IC_RCA_TIMEOUT"] = "vendor/model", "3", "500", "30s"
+	cfg, err = LoadConfig(envMap(env))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if got := *cfg.LLM; got.Model != "vendor/model" || got.Budget != (Budget{3, 500, 30 * time.Second}) {
+		t.Errorf("LLM = %+v", got)
+	}
+
+	for key, bad := range map[string]string{"IC_RCA_MAX_STEPS": "0", "IC_RCA_MAX_TOKENS": "lots", "IC_RCA_TIMEOUT": "-1s"} {
+		env := required()
+		env["OPENROUTER_API_KEY"], env[key] = "sk-or", bad
+		if _, err := LoadConfig(envMap(env)); err == nil || !strings.Contains(err.Error(), key) {
+			t.Errorf("%s=%s: error %v, want one naming the variable", key, bad, err)
 		}
 	}
 }

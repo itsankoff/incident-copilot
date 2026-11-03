@@ -21,6 +21,7 @@ import (
 	"github.com/itsankoff/incident-copilot/internal/github"
 	"github.com/itsankoff/incident-copilot/internal/kubernetes"
 	"github.com/itsankoff/incident-copilot/internal/link"
+	"github.com/itsankoff/incident-copilot/internal/openrouter"
 	"github.com/itsankoff/incident-copilot/internal/sensor"
 	"github.com/itsankoff/incident-copilot/internal/signal"
 	"github.com/itsankoff/incident-copilot/internal/store"
@@ -83,14 +84,29 @@ func runControlPlane(ctx context.Context, logger *slog.Logger) error {
 		tickets = &logTickets{logger: logger}
 		logger.Warn("IC_GITHUB_REPO and IC_GITHUB_TOKEN unset: using the fake ticketing adapter, which only logs tickets")
 	}
-	cp := controlplane.New(alertmanager.New([]signal.Source{cfg.Alertmanager}), st, tickets, log, time.Now)
-
 	tokens := map[string]string{}
 	for _, l := range cfg.Locations {
 		tokens[l.Name] = l.Token
 	}
 	hub := link.NewHub(tokens, log, time.Now)
 	ev := controlplane.NewEvidence(cfg.Locations, hub, log, time.Now)
+
+	var inv *controlplane.Investigator
+	model := ""
+	if c := cfg.LLM; c != nil {
+		// Free models can take a while to answer; the RCA loop's time budget
+		// bounds the whole investigation.
+		client := openrouter.New(openrouter.APIURL, c.Key, &http.Client{Timeout: 2 * time.Minute})
+		inv = controlplane.NewInvestigator(client, c.Model, c.Budget, ev, tickets, log, time.Now)
+		model = c.Model
+	} else {
+		logger.Warn("OPENROUTER_API_KEY unset: Incidents get tickets but are not investigated")
+	}
+	cp := controlplane.New(alertmanager.New([]signal.Source{cfg.Alertmanager}), st, tickets, log, time.Now, inv)
+	// Deferred after the store and audit log, so it runs before they close: an
+	// investigation in flight finishes (within its time budget, unless the pod
+	// is killed first), though its Evidence queries fail once the hub stops.
+	defer cp.Wait()
 
 	mux := http.NewServeMux()
 	mux.Handle("/link/", hub.Handler())
@@ -107,7 +123,7 @@ func runControlPlane(ctx context.Context, logger *slog.Logger) error {
 			errc <- err
 		}
 	}()
-	logger.Info("control plane listening", "addr", cfg.ListenAddr, "source", cfg.Alertmanager.Instance, "repo", repo, "locations", len(cfg.Locations))
+	logger.Info("control plane listening", "addr", cfg.ListenAddr, "source", cfg.Alertmanager.Instance, "repo", repo, "locations", len(cfg.Locations), "model", model)
 
 	select {
 	case err := <-errc:

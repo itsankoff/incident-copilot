@@ -36,12 +36,17 @@ func NewEvidence(locations []Location, l Link, log *audit.Log, now func() time.T
 	return &Evidence{locations: locations, link: l, audit: log, now: now}
 }
 
+// errAudit marks a query whose audit entry could not be written: the call
+// ran, but nothing may use its answer.
+var errAudit = errors.New("audit")
+
 // defaultWindow is what a query reads when it names no window.
 const defaultWindow = time.Hour
 
 // Query runs q for incident (0 outside any Incident). The audit entry holds
 // the ref and a digest of the answer, never the answer: nothing redacts it yet
-// (#49), and secrets never reach the audit log.
+// (#49), and secrets never reach the audit log. A failed query still returns
+// its ref, so the failure can be reported against it.
 func (e *Evidence) Query(ctx context.Context, incident int64, q evidence.Query) (evidence.Result, error) {
 	now := e.now()
 	if q.Window.End.IsZero() {
@@ -68,10 +73,10 @@ func (e *Evidence) Query(ctx context.Context, incident int64, q evidence.Query) 
 		entry["outcome"], entry["bytes"], entry["sha256"] = "ok", len(answer.Data), hex.EncodeToString(sum[:])
 	}
 	if aerr := e.audit.Append(e.now(), "evidence.query", incident, entry); aerr != nil {
-		return evidence.Result{}, aerr
+		return evidence.Result{Ref: ref}, fmt.Errorf("%w: %w", errAudit, aerr)
 	}
 	if err != nil {
-		return evidence.Result{}, err
+		return evidence.Result{Ref: ref}, err
 	}
 	return evidence.Result{Ref: ref, Data: answer.Data}, nil
 }
@@ -92,8 +97,8 @@ func (e *Evidence) Locations() []LocationStatus {
 	return out
 }
 
-// DebugHandler lets an operator run Evidence queries by hand until the RCA
-// loop does (#48). It has no authentication, so it stays off the port Signal
+// DebugHandler lets an operator run Evidence queries by hand, outside any
+// Incident. It has no authentication, so it stays off the port Signal
 // sources and Sensors reach, and IC_DEBUG_ADDR defaults to loopback.
 func (e *Evidence) DebugHandler() http.Handler {
 	mux := http.NewServeMux()
