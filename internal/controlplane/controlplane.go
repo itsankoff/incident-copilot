@@ -1,6 +1,7 @@
 // Package controlplane is the Control plane's Signal path: it authenticates
 // Alerts, turns them into Signals, runs Triage, keeps Incidents in the store,
-// writes one ticket per Incident, and audits every step.
+// writes one ticket per Incident, investigates each new Incident, and audits
+// every step.
 package controlplane
 
 import (
@@ -37,13 +38,18 @@ type Server struct {
 	tickets      Ticketing
 	audit        *audit.Log
 	now          func() time.Time
+	investigator *Investigator // nil: Incidents are not investigated
 
-	mu sync.Mutex // serialises Triage over the stored Incidents
+	mu             sync.Mutex // serialises Triage over the stored Incidents
+	investigations sync.WaitGroup
 }
 
-func New(alertmanager signal.Adapter, st Store, tickets Ticketing, log *audit.Log, now func() time.Time) *Server {
-	return &Server{alertmanager: alertmanager, store: st, tickets: tickets, audit: log, now: now}
+func New(alertmanager signal.Adapter, st Store, tickets Ticketing, log *audit.Log, now func() time.Time, inv *Investigator) *Server {
+	return &Server{alertmanager: alertmanager, store: st, tickets: tickets, audit: log, now: now, investigator: inv}
 }
+
+// Wait returns once every investigation started so far has finished.
+func (s *Server) Wait() { s.investigations.Wait() }
 
 // maxBody is the largest request body a Signal source may send (ADR 0002 D3).
 const maxBody = 1 << 20
@@ -162,6 +168,7 @@ func (s *Server) ingest(ctx context.Context, sig signal.Signal, now time.Time) e
 		if err := tx.SetTicket(ctx, inc.ID, ref); err != nil {
 			return err
 		}
+		inc.TicketRef = ref
 		if err := s.audit.Append(now, "ticket.created", inc.ID, map[string]string{"ref": ref}); err != nil {
 			return err
 		}
@@ -173,7 +180,21 @@ func (s *Server) ingest(ctx context.Context, sig signal.Signal, now time.Time) e
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if d.Kind == triage.Open && s.investigator != nil {
+		// The investigation outlives the request that opened the Incident.
+		ictx := context.WithoutCancel(ctx)
+		s.investigations.Add(1)
+		go func() {
+			defer s.investigations.Done()
+			if err := s.investigator.Run(ictx, inc); err != nil {
+				_ = s.audit.Append(s.now(), "investigation.failed", inc.ID, map[string]string{"error": err.Error()})
+			}
+		}()
+	}
+	return nil
 }
 
 func (s *Server) auditDecision(sig signal.Signal, decision map[string]any, incident int64, now time.Time) error {

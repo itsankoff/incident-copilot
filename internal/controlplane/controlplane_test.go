@@ -68,6 +68,7 @@ type harness struct {
 	url     string
 	store   *store.Store
 	tickets *fakeTickets
+	cp      *Server
 	now     time.Time
 	close   func()
 }
@@ -89,6 +90,13 @@ func newHarness(t *testing.T, dir string, tickets *fakeTickets) *harness {
 // between the Control plane and its store.
 func start(t *testing.T, dir string, tickets *fakeTickets, sources []signal.Source, wrap func(*store.Store) Store) *harness {
 	t.Helper()
+	return startWith(t, dir, tickets, sources, wrap, nil)
+}
+
+// startWith is start with an Investigator built by inv, when set.
+func startWith(t *testing.T, dir string, tickets *fakeTickets, sources []signal.Source, wrap func(*store.Store) Store,
+	inv func(*audit.Log, Ticketing, func() time.Time) *Investigator) *harness {
+	t.Helper()
 	st, err := store.Open(filepath.Join(dir, "state.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -102,11 +110,17 @@ func start(t *testing.T, dir string, tickets *fakeTickets, sources []signal.Sour
 	if wrap != nil {
 		s = wrap(st)
 	}
-	cp := New(alertmanager.New(sources), s, tickets, log, func() time.Time { return h.now })
-	srv := httptest.NewServer(cp.Handler())
+	now := func() time.Time { return h.now }
+	var investigator *Investigator
+	if inv != nil {
+		investigator = inv(log, tickets, now)
+	}
+	h.cp = New(alertmanager.New(sources), s, tickets, log, now, investigator)
+	srv := httptest.NewServer(h.cp.Handler())
 	h.url = srv.URL
 	h.close = func() {
 		srv.Close()
+		h.cp.Wait()
 		_ = st.Close()
 		_ = log.Close()
 	}

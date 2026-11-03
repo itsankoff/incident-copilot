@@ -3,7 +3,9 @@ package controlplane
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/itsankoff/incident-copilot/internal/signal"
 )
@@ -17,6 +19,7 @@ type Config struct {
 	AuditPath    string // hash-chained JSONL
 	Alertmanager signal.Source
 	GitHub       *GitHub // nil: the fake ticketing adapter
+	LLM          *LLM    // nil: Incidents are not investigated
 	Locations    []Location
 	DebugAddr    string // loopback only: see Evidence.DebugHandler
 }
@@ -34,6 +37,14 @@ type GitHub struct {
 	APIURL string
 	Repo   string // owner/name
 	Token  string
+}
+
+// LLM is the RCA loop's model and budgets. OpenRouter is the only provider.
+type LLM struct {
+	APIURL string
+	Key    string
+	Model  string // configured; with openrouter/free each answer names its own model
+	Budget Budget
 }
 
 // LoadConfig builds a Config from environment variables read through getenv.
@@ -75,6 +86,21 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	case repo != "" || token != "":
 		return Config{}, fmt.Errorf("IC_GITHUB_REPO and IC_GITHUB_TOKEN: set both, or neither for the fake ticketing adapter")
 	}
+	if key := getenv("OPENROUTER_API_KEY"); key != "" {
+		cfg.LLM = &LLM{APIURL: env("IC_LLM_API_URL", "https://openrouter.ai/api/v1"), Key: key, Model: env("IC_LLM_MODEL", "openrouter/free")}
+		// Conservative defaults until the eval harness tunes them.
+		b := &cfg.LLM.Budget
+		var err error
+		if b.Steps, err = positiveInt(env("IC_RCA_MAX_STEPS", "8")); err != nil {
+			return Config{}, fmt.Errorf("IC_RCA_MAX_STEPS: %w", err)
+		}
+		if b.Tokens, err = positiveInt(env("IC_RCA_MAX_TOKENS", "100000")); err != nil {
+			return Config{}, fmt.Errorf("IC_RCA_MAX_TOKENS: %w", err)
+		}
+		if b.Time, err = time.ParseDuration(env("IC_RCA_TIMEOUT", "5m")); err != nil || b.Time <= 0 {
+			return Config{}, fmt.Errorf("IC_RCA_TIMEOUT: want a positive duration such as 5m")
+		}
+	}
 	// One token, or two during rotation, comma-separated: a bearer token
 	// cannot contain a comma.
 	if tokens := cfg.Alertmanager.Tokens; len(tokens) > 2 || slices.Contains(tokens, "") {
@@ -85,6 +111,14 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func positiveInt(s string) (int, error) {
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("want a positive integer, got %q", s)
+	}
+	return n, nil
 }
 
 // parseLocations reads comma-separated name:environment:token entries. The

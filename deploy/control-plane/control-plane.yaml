@@ -19,8 +19,10 @@ spec:
         - name: control-plane
           image: incident-copilot
           args: ["-role=control-plane"]
-          # IC_ALERTMANAGER_TOKEN, and IC_GITHUB_REPO and IC_GITHUB_TOKEN when
-          # .env.demo sets them.
+          # IC_ALERTMANAGER_TOKEN, and IC_GITHUB_REPO, IC_GITHUB_TOKEN,
+          # OPENROUTER_API_KEY, and IC_LLM_MODEL (default openrouter/free) when
+          # .env.demo sets them. They stay out of env below, which would
+          # override them.
           envFrom:
             - secretRef: { name: incident-copilot-env }
           env:
