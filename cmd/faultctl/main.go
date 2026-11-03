@@ -131,11 +131,13 @@ func status(ctx context.Context, d fault.Demo, find func(string) (fault.Scenario
 			target = s.Inject.Target
 		}
 	}
+	// kubectl exits non-zero for a rollout past its deadline, which is a state to report.
 	out, err := d.Kubectl(ctx, "-n", fault.Namespace, "rollout", "status", "deployment/"+target, "--watch=false")
 	if err != nil {
-		return err
+		fmt.Println("rollout:", err)
+	} else {
+		fmt.Print("rollout: ", string(out))
 	}
-	fmt.Print("rollout: ", string(out))
 	alerts, err := d.FiringAlerts(ctx)
 	if err != nil {
 		return err

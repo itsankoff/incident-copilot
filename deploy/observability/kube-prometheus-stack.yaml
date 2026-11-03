@@ -53,6 +53,9 @@ defaultRules:
     # Docker Desktop's VM does not expose NTP sync state to node-exporter,
     # so this fires permanently in kind.
     NodeClockNotSynchronising: true
+    # A crashing or Pending demo pod is a down scrape target; this would fire
+    # alongside the workload alerts with no Deployment to name.
+    TargetDown: true
 
 prometheus:
   prometheusSpec:

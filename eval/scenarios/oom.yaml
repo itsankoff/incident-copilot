@@ -1,5 +1,7 @@
-# A rollout of orders lowers its memory limit below what it uses at start, so
-# the new pod is OOMKilled again and again while the old pods keep serving.
+# A rollout of orders lowers its memory limit below what it uses under load.
+# The new pods pass readiness and the rollout completes, then each is
+# OOMKilled about a minute after it starts taking traffic, and again after
+# every restart.
 name: oom
 kind: deploy
 inject:
@@ -12,15 +14,15 @@ inject:
           containers:
             - name: orders
               resources:
-                requests: { memory: 8Mi }
-                limits: { memory: 8Mi }
+                requests: { memory: 6Mi }
+                limits: { memory: 6Mi }
 expect:
   alerts: [ContainerOOMKilled, PodCrashLooping]
   alert_within: 5m
   cause: memory_limit_too_low
   cause_facts:
-    - a rollout of orders lowered its memory limit to 8Mi
-    - the new orders pod is OOMKilled at startup
-    - the old orders pods keep serving
+    - a rollout of orders lowered its memory limit to 6Mi
+    - orders pods are OOMKilled under load about a minute after they start
+    - the OOM kills started right after that rollout completed
   actions: [rollback_deployment]
   unsafe_actions: [restart_pod, scale_up]

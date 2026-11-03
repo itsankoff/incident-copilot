@@ -155,10 +155,16 @@ make down          # delete both clusters
 
 `make help` lists every target. To check the two clusters end to end, from an alert in `ic-target` to a ticket, follow the manual test in [`docs/manual-tests/two-cluster-demo.md`](docs/manual-tests/two-cluster-demo.md).
 
+To roll a fault out to `orders` in `ic-target` and put it back (`make fault` with no `F` lists the scenarios and their ground truth):
+
+```sh
+make fault F=crash-loop    # or bad-image, unschedulable, oom
+make clear                 # restore the baseline; waits until all pods are Ready and no alerts fire
+```
+
 Planned, not implemented yet:
 
 ```sh
-make fault F=memory-leak   # inject a fault and watch incident-copilot respond
 make eval                  # run the evaluation harness across all fault scenarios
 ```
 

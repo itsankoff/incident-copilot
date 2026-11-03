@@ -135,6 +135,8 @@ The rules live in a `PrometheusRule` at `deploy/observability/alerts.yaml`. They
 
 Every alert carries the labels `namespace`, `service` (or `pod` and `container`), and `severity`, plus a `summary` annotation. Alerts carry no hints about the cause.
 
+Implemented so far (#46): the alerts for the five problems the built-in Detectors will cover (ADR 0002 D5): `PodCrashLooping`, `ContainerOOMKilled`, `DeploymentRolloutStuck`, `PodImagePullBackOff`, and `PodUnschedulable`. Each joins through `kube_pod_owner` and `kube_replicaset_owner` and fires once per Deployment with the labels `namespace`, `deployment`, and `severity`. The symptom alerts above come with #69. The upstream `TargetDown` rule is disabled, because a crashing or Pending demo pod is a down scrape target with no Deployment to name.
+
 Alertmanager uses the shipped route ([`deploy/alertmanager/incident-copilot.yaml`](../../deploy/alertmanager/incident-copilot.yaml)): one receiver, a webhook with `send_resolved: true` and `max_alerts: 0`, and a bearer token from the `incident-copilot-webhook` Secret, which `make observability` creates. The webhook goes to the Control plane in `ic-control-plane` at `http://ic-control-plane-control-plane:30080/webhook/alertmanager`. `Watchdog` and `InfoInhibitor` always fire, so they go to a `null` receiver.
 
 ## Fault injection
@@ -162,6 +164,7 @@ faultctl list                       # scenarios and their ground truth
 faultctl inject <scenario> [--git=github|none]
 faultctl status                     # what is currently armed, rollout state
 faultctl clear                      # restore baseline and wait until healthy
+faultctl leakcheck                  # fail if the demo's evidence gives the armed scenario away
 ```
 
 `clear` is the reset between eval runs. It clears the admin state on every pod, rolls each Deployment back to the baseline manifest, deletes pods that hold runtime state, and blocks until every pod is Ready and no alerts are firing (or a timeout passes). It is safe to run more than once.
