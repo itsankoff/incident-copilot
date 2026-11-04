@@ -417,7 +417,7 @@ func index(incs []triage.Incident, id int64) int {
 func title(inc triage.Incident) string {
 	t := fmt.Sprintf("%s on %s", inc.Members[0].Name, inc.Target)
 	if inc.Target == nil {
-		t = fmt.Sprintf("%s (%s)", inc.Members[0].Name, inc.Key)
+		t = fmt.Sprintf("%s from %s (no Target)", inc.Members[0].Name, inc.Members[0].Source.Instance)
 	}
 	if sev := inc.Severity(); sev != "" {
 		t = "[" + string(sev) + "] " + t
@@ -433,7 +433,7 @@ func body(inc triage.Incident, recurrenceRef string) string {
 		fmt.Fprintf(&b, "**Recurrence of:** Incident %d, ticket #%s\n\n", inc.RecurrenceOf, recurrenceRef)
 	}
 	if inc.Target == nil {
-		fmt.Fprintf(&b, "**Target:** none. The Signal names no workload; key `%s`.\n\n", inc.Key)
+		fmt.Fprintf(&b, "**Target:** none. No Signal names a workload; grouped by Signal name, key `%s`.\n\n", inc.Key)
 	} else {
 		fmt.Fprintf(&b, "**Target:** `%s` (%s)\n\n", inc.Target, inc.Target.Platform)
 	}

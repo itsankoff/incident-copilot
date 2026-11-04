@@ -84,15 +84,17 @@ alertmanager:
   # its node's container name on kind's Docker network.
   config:
     route:
-      receiver: incident-copilot
+      # Only the demo's alerts reach incident-copilot. The stack's own alerts
+      # (Watchdog, Prometheus*, Alertmanager*, KubeAPI*) name no workload, and
+      # each would open a ticket of its own.
+      receiver: "null"
       group_by: ['...']
       group_wait: 10s
       group_interval: 1m
       repeat_interval: 5m
       routes:
-        # Always firing by design; they name no workload.
-        - receiver: "null"
-          matchers: ['alertname =~ "Watchdog|InfoInhibitor"']
+        - receiver: incident-copilot
+          matchers: ['namespace = "demo"']
     receivers:
       - name: "null"
       - name: incident-copilot
