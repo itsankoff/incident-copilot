@@ -136,8 +136,18 @@ The full topology, with namespaces and networking, is in [`docs/design/demo-envi
 
 ### Prerequisites
 
-- Go 1.25+
-- Docker (4 CPUs and 8 GB of memory allocated), [kind](https://kind.sigs.k8s.io), `kubectl`, and [Helm](https://helm.sh) (on macOS: `brew install go kind kubectl helm`)
+| Tool | Version | Needed for |
+|---|---|---|
+| [Go](https://go.dev) | 1.25+ | Building, testing, and `make fault` |
+| [Docker](https://docs.docker.com/get-docker/) | Any recent version, with 4 CPUs and 8 GB of memory allocated | Images and the kind nodes |
+| [kind](https://kind.sigs.k8s.io) | v0.31.0 | The two clusters (Kubernetes v1.35.0 nodes) |
+| [kubectl](https://kubernetes.io/docs/tasks/tools/) | Within one minor version of v1.35 (v1.34 to v1.36) | Every cluster target |
+| [Helm](https://helm.sh) | v3+ | The observability stack |
+| [golangci-lint](https://golangci-lint.run) | v2.13.2 | `make lint` |
+| [k9s](https://k9scli.io) (optional) | 0.50+ | `make k9s` |
+| [jq](https://jqlang.org) (optional) | Any | The manual tests in [`docs/manual-tests`](docs/manual-tests) |
+
+On macOS: `brew install go kind kubectl helm k9s jq`, and `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2`. The pinned versions live in [`deploy/versions.env`](deploy/versions.env), and `make tools` checks them.
 
 ### Run it
 
@@ -150,6 +160,7 @@ make control-plane # build the incident-copilot image and deploy the Control pla
 make port-forward  # ic-target's Prometheus :9090, Alertmanager :9093, Loki API :3100, Grafana :3000
                    # (Grafana is on by default: make cluster GRAFANA=0 or make observability GRAFANA=0 to disable it. Loki has no UI of its own.)
 make status        # pods in both clusters
+make k9s           # browse ic-target in k9s (CLUSTER=cp for ic-control-plane; brew install k9s)
 make down          # delete both clusters
 ```
 
