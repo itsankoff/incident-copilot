@@ -36,7 +36,7 @@ FAULTCTL := go run ./cmd/faultctl --context kind-$(TARGET_CLUSTER)
 
 .PHONY: help
 help: ## Show this help
-	@awk 'BEGIN {FS = ":.*##"} /^##@/ {printf "\n%s\n", substr($$0, 5)} /^[a-zA-Z_-]+:.*##/ {printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*##"} /^##@/ {printf "\n%s\n", substr($$0, 5)} /^[a-zA-Z0-9_-]+:.*##/ {printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 .PHONY: build
 build: ## Compile all Go packages and binaries
@@ -71,6 +71,12 @@ tools: ## Check that required tools are installed
 	[ "$$hv" -ge "$(HELM_MIN_MAJOR)" ] || { echo "helm major $$hv < $(HELM_MIN_MAJOR)"; exit 1; }; \
 	gv=$$(go env GOVERSION | sed 's/^go//'); \
 	printf '%s\n%s\n' "$(GO_MIN_VERSION)" "$$gv" | sort -V -C || { echo "go $$gv < $(GO_MIN_VERSION)"; exit 1; }; \
+	if command -v k9s >/dev/null; then \
+	  k9v=$$(k9s version -s | awk '/^Version/ {print $$2}'); \
+	  printf '%s\n%s\n' "$(K9S_MIN_VERSION)" "$$k9v" | sort -V -C || echo "warning: k9s $$k9v < $(K9S_MIN_VERSION)"; \
+	else \
+	  echo "optional: k9s not found, needed only for make k9s (brew install k9s)"; \
+	fi; \
 	echo "tools ok (go $$gv, kind $$kv, helm $$(helm version --short))"
 
 ##@ Demo environment
@@ -208,6 +214,18 @@ port-forward: ## Forward ic-target's Prometheus :9090, Alertmanager :9093, Loki 
 	  echo "Grafana is off. Enable it with: make observability GRAFANA=1"; \
 	fi; \
 	wait
+
+# Which cluster make k9s opens: target (ic-target) or cp (ic-control-plane).
+CLUSTER ?= target
+
+.PHONY: k9s
+k9s: ## Open k9s on a cluster (CLUSTER=target, the default, or CLUSTER=cp)
+	@command -v k9s >/dev/null || { echo "missing: k9s (brew install k9s)"; exit 1; }
+	@case "$(CLUSTER)" in \
+	  target) exec k9s --context kind-$(TARGET_CLUSTER) ;; \
+	  cp)     exec k9s --context kind-$(CONTROL_PLANE_CLUSTER) ;; \
+	  *)      echo "unknown CLUSTER=$(CLUSTER): use target or cp"; exit 1 ;; \
+	esac
 
 .PHONY: down
 down: ## Delete both kind clusters
