@@ -208,7 +208,7 @@ func (s *Server) auditDecision(sig signal.Signal, decision map[string]any, incid
 
 func title(inc triage.Incident) string {
 	if inc.Target == nil {
-		return fmt.Sprintf("%s (%s)", inc.Members[0].Name, inc.Key)
+		return fmt.Sprintf("%s from %s (no Target)", inc.Members[0].Name, inc.Members[0].Source.Instance)
 	}
 	return fmt.Sprintf("%s on %s", inc.Members[0].Name, inc.Target)
 }
@@ -216,7 +216,7 @@ func title(inc triage.Incident) string {
 func body(inc triage.Incident) string {
 	var b strings.Builder
 	if inc.Target == nil {
-		fmt.Fprintf(&b, "**Target:** none. The Signal names no workload; key `%s`.\n\n", inc.Key)
+		fmt.Fprintf(&b, "**Target:** none. No Signal names a workload; grouped by Signal name, key `%s`.\n\n", inc.Key)
 	} else {
 		fmt.Fprintf(&b, "**Target:** `%s` (%s)\n\n", inc.Target, inc.Target.Platform)
 	}
