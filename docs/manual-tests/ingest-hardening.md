@@ -169,7 +169,7 @@ make control-plane
 ```sh
 am() { kubectl --context kind-ic-target -n monitoring exec alertmanager-kps-alertmanager-0 -c alertmanager -- "$@"; }
 am amtool config routes --alertmanager.url=http://localhost:9093
-# expect: incident-copilot at the root, with a "null" child for Watchdog|InfoInhibitor
+# expect: "null" at the root, with an incident-copilot child for namespace="demo"
 am amtool config show --alertmanager.url=http://localhost:9093 \
   | grep -E "'\.\.\.'|group_wait|group_interval|repeat_interval|send_resolved|max_alerts|credentials_file"
 # expect '...', group_wait 10s, group_interval 1m, repeat_interval 5m, send_resolved true,

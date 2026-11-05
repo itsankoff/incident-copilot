@@ -322,8 +322,8 @@ func TestPodOnlyAlertHasNoTarget(t *testing.T) {
 		t.Fatalf("%d tickets, want 1", len(h.tickets.created))
 	}
 	tk := h.tickets.created[0]
-	if !strings.Contains(tk.title, "prod-am/ppp") || !strings.Contains(tk.title, "KubePodNotReady") {
-		t.Errorf("title %q does not name the key and Signal", tk.title)
+	if tk.title != "KubePodNotReady from prod-am (no Target)" {
+		t.Errorf("title %q does not name the Signal and its source", tk.title)
 	}
 	if strings.Contains(tk.title+tk.body, "Deployment") {
 		t.Errorf("a Target was derived from a pod name: %q\n%s", tk.title, tk.body)
@@ -334,6 +334,18 @@ func TestPodOnlyAlertHasNoTarget(t *testing.T) {
 	}
 	if sig.Target != nil {
 		t.Errorf("Signal has Target %+v, want none", *sig.Target)
+	}
+}
+
+func TestNoTargetSeriesOfOneRuleShareATicket(t *testing.T) {
+	h := newHarness(t, t.TempDir(), &fakeTickets{})
+	h.send(tokenProd,
+		alert("PrometheusMissingRuleEvaluations", "g1", map[string]string{"namespace": "monitoring", "rule_group": "a"}),
+		alert("PrometheusMissingRuleEvaluations", "g2", map[string]string{"namespace": "monitoring", "rule_group": "b"}),
+	)
+
+	if len(h.tickets.created) != 1 || len(h.tickets.comments) != 1 {
+		t.Fatalf("%d tickets, %d comments, want 1 and 1", len(h.tickets.created), len(h.tickets.comments))
 	}
 }
 

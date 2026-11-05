@@ -19,7 +19,7 @@ const schema = `
 CREATE TABLE IF NOT EXISTS incidents (
 	id         INTEGER PRIMARY KEY AUTOINCREMENT,
 	target     TEXT,              -- JSON signal.Target, NULL when there is none
-	key        TEXT NOT NULL,     -- the opening Signal's key when there is no Target
+	key        TEXT NOT NULL,     -- <source instance>/<Signal name> when there is no Target
 	opened_at  TEXT NOT NULL,
 	ticket_ref TEXT NOT NULL DEFAULT ''
 );
