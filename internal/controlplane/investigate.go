@@ -76,7 +76,9 @@ var submitSpec = llm.ToolSpec{
 var systemPrompt string
 
 // incidentBrief is all the model learns about the Incident: identifiers only,
-// never Alert annotations (ADR 0003 D4).
+// never Alert annotations (ADR 0003 D4). The source link is redacted before it
+// is encoded, because encoding hides a pre-signed URL's parameters from the
+// pass over the whole request.
 func incidentBrief(inc triage.Incident) string {
 	type sig struct {
 		Name     string    `json:"name"`
@@ -90,7 +92,7 @@ func incidentBrief(inc triage.Incident) string {
 		Signals []sig `json:"signals"`
 	}{Target: inc.Target}
 	for _, m := range inc.Members {
-		brief.Signals = append(brief.Signals, sig{m.Name, string(m.Severity), m.StartsAt.UTC(), m.Source.Kind + "/" + m.Source.Instance, m.Link})
+		brief.Signals = append(brief.Signals, sig{m.Name, string(m.Severity), m.StartsAt.UTC(), m.Source.Kind + "/" + m.Source.Instance, redact.String(m.Link)})
 	}
 	b, _ := json.Marshal(brief) // strings and times always marshal
 	return "Investigate this Incident:\n" + string(b)
@@ -236,7 +238,9 @@ func (v *Investigator) toolResult(ctx context.Context, inc triage.Incident, tc l
 	}
 	inv.ledger = append(inv.ledger, ledgerEntry{Ref: res.Ref, Tool: tc.Name, OK: err == nil})
 	if err != nil {
-		return frame(res.Ref, map[string]string{"error": err.Error()}), nil
+		// Redacted before framing, so a cut-off private key cannot take the
+		// frame's end with it in the pass over the whole request.
+		return frame(res.Ref, map[string]string{"error": redact.String(err.Error())}), nil
 	}
 	return frame(res.Ref, map[string]json.RawMessage{"data": res.Data}), nil
 }
@@ -251,12 +255,16 @@ func frame(ref evidence.Ref, read any) string {
 	return fmt.Sprintf("%s\n<untrusted-data>\n%s\n</untrusted-data>", r, b)
 }
 
-// redacted is msgs with the redactor run over every message's text: the
-// Control plane's pass before every LLM call (ADR 0003 D8).
+// redacted is msgs with the redactor run over every message's text and tool
+// call arguments: the Control plane's pass before every LLM call (ADR 0003 D8).
 func redacted(msgs []llm.Message) []llm.Message {
 	out := slices.Clone(msgs)
 	for i := range out {
 		out[i].Content = redact.String(out[i].Content)
+		out[i].ToolCalls = slices.Clone(out[i].ToolCalls)
+		for j := range out[i].ToolCalls {
+			out[i].ToolCalls[j].Arguments = redact.String(out[i].ToolCalls[j].Arguments)
+		}
 	}
 	return out
 }

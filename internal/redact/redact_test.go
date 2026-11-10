@@ -48,6 +48,7 @@ func TestString(t *testing.T) {
 			"https://productionresultssa1.blob.core.windows.net/actions-results/x/logs.txt?rsct=text%2Fplain&se=2026-11-11T10%3A00%3A00Z&sig=AbC%2BdEf%3D&sp=r&sv=2021-12-02",
 			"https://productionresultssa1.blob.core.windows.net/actions-results/x/logs.txt?rsct=text%2Fplain&se=2026-11-11T10%3A00%3A00Z&sig=[REDACTED]&sp=r&sv=2021-12-02"},
 		{"GCS signed URL", "https://storage.googleapis.com/b/o?X-Goog-Signature=0a1b2c#frag", "https://storage.googleapis.com/b/o?X-Goog-Signature=[REDACTED]#frag"},
+		{"password in a URL", "dial postgres://orders:hunter2@db.demo:5432/orders failed", "dial postgres://orders:[REDACTED]@db.demo:5432/orders failed"},
 		{"already redacted stays the same", "password=[REDACTED] Bearer [REDACTED]", "password=[REDACTED] Bearer [REDACTED]"},
 
 		// Near-misses: text that looks close but holds no secret.
@@ -64,6 +65,8 @@ func TestString(t *testing.T) {
 		{"sha256 digest", "sha256:fe5f80f77d5fa3beca038a248ff027d0445342fe2855ddc963176630326f1024", "sha256:fe5f80f77d5fa3beca038a248ff027d0445342fe2855ddc963176630326f1024"},
 		{"URL without signature", "http://prometheus/graph?g0.expr=up&g0.tab=1", "http://prometheus/graph?g0.expr=up&g0.tab=1"},
 		{"query param that only ends in sig", "https://x/y?design=blue&signature_version=4", "https://x/y?design=blue&signature_version=4"},
+		{"URL with a port and no credentials", "GET http://orders.demo:8080/healthz", "GET http://orders.demo:8080/healthz"},
+		{"git remote without a scheme", "git@github.com:itsankoff/incident-copilot.git", "git@github.com:itsankoff/incident-copilot.git"},
 		{"container image digest", "orders@sha256:4f5de0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab", "orders@sha256:4f5de0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -75,7 +78,7 @@ func TestString(t *testing.T) {
 }
 
 func TestJSONRedactsInsideStringValues(t *testing.T) {
-	// json.Marshal writes & as & and newlines as \n, so a pattern run over
+	// json.Marshal writes & as \u0026 and newlines as \n, so a pattern run over
 	// the encoded text would miss the second query parameter and the key.
 	in, _ := json.Marshal(map[string]any{
 		"message": "fetch https://b/o?X-Amz-Algorithm=A&X-Amz-Signature=deadbeef failed",
@@ -128,5 +131,12 @@ func TestJSONReplacesValuesUnderSensitiveNames(t *testing.T) {
 func TestJSONRedactsTextThatIsNotJSON(t *testing.T) {
 	if out := string(JSON(json.RawMessage("not json " + ghp))); out != "not json [REDACTED]" {
 		t.Errorf("got %q", out)
+	}
+}
+
+func TestJSONLeavesEmptyInputAlone(t *testing.T) {
+	// An Answer with no data has a nil Data, which must still marshal.
+	if out := JSON(nil); out != nil {
+		t.Errorf("JSON(nil) = %q, want nil", out)
 	}
 }

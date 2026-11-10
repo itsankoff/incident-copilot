@@ -13,40 +13,41 @@ import (
 // Marker replaces each secret.
 const Marker = "[REDACTED]"
 
-// A rule matches a secret. When it has a capturing group, only the first
-// group is the secret and the rest of the match is kept.
-type rule struct{ re *regexp.Regexp }
-
-// sensitiveName is a key or parameter name whose value is a secret.
+// sensitiveName matches a key or parameter name whose value is a secret.
 const sensitiveName = `[A-Za-z0-9_.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|account[_-]?key|private[_-]?key)[A-Za-z0-9_.-]*`
 
-var rules = []rule{
-	// Private keys, JWTs, bearer tokens, AWS key ids, Google API keys, GitHub tokens.
-	{regexp.MustCompile(`-----BEGIN[A-Z ]*PRIVATE KEY-----(?s:.*?)(?:-----END[A-Z ]*PRIVATE KEY-----|\z)`)},
-	{regexp.MustCompile(`\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`)},
-	{regexp.MustCompile(`(?i)\bbearer\s+([A-Za-z0-9._~+/=-]{20,})`)},
-	{regexp.MustCompile(`\b(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b`)},
-	{regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`)},
+// patterns match secrets. When a pattern has a capturing group, only the
+// first group is the secret and the rest of the match is kept.
+var patterns = []*regexp.Regexp{
+	// Private keys, JWTs, bearer tokens, AWS key ids, Google API keys.
+	regexp.MustCompile(`-----BEGIN[A-Z ]*PRIVATE KEY-----(?s:.*?)(?:-----END[A-Z ]*PRIVATE KEY-----|\z)`),
+	regexp.MustCompile(`\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`),
+	regexp.MustCompile(`(?i)\bbearer\s+([A-Za-z0-9._~+/=-]{20,})`),
+	regexp.MustCompile(`\b(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b`),
+	regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`),
 	// GitHub tokens are 36 characters after the prefix today, but GitHub says
 	// the length may change, so a looser bound misses fewer.
-	{regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{30,}\b|\bgithub_pat_[A-Za-z0-9_]{22,}`)},
+	regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{30,}\b|\bgithub_pat_[A-Za-z0-9_]{22,}`),
 	// Pre-signed URLs: S3, GCS, Azure SAS (GitHub job-log links), CloudFront.
-	{regexp.MustCompile(`(?i)[?&](?:x-amz-signature|x-amz-credential|x-amz-security-token|x-goog-signature|x-goog-credential|signature|sig)=([^&#\s"'<>]+)`)},
-	{regexp.MustCompile(`(?i)` + sensitiveName + `\s*[=:]\s*("[^"]*"|'[^']*'|[^\s&,;"']+)`)},
+	regexp.MustCompile(`(?i)[?&](?:x-amz-signature|x-amz-credential|x-amz-security-token|x-goog-signature|x-goog-credential|signature|sig)=([^&#\s"'<>]+)`),
+	// The password in a URL's user info, such as a connection string.
+	regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^/\s:@]+:([^/\s@]+)@`),
+	regexp.MustCompile(`(?i)` + sensitiveName + `\s*[=:]\s*("[^"]*"|'[^']*'|[^\s&,;"']+)`),
 }
 
-var sensitive = regexp.MustCompile(`(?i)^` + sensitiveName + `$`)
+var isSensitiveName = regexp.MustCompile(`(?i)^` + sensitiveName + `$`)
 
 // String returns s with every secret replaced by Marker.
 func String(s string) string {
-	for _, r := range rules {
-		s = r.apply(s)
+	for _, p := range patterns {
+		s = replace(p, s)
 	}
 	return s
 }
 
-func (r rule) apply(s string) string {
-	matches := r.re.FindAllStringSubmatchIndex(s, -1)
+// replace replaces each secret p finds in s, keeping any already redacted.
+func replace(p *regexp.Regexp, s string) string {
+	matches := p.FindAllStringSubmatchIndex(s, -1)
 	if matches == nil {
 		return s
 	}
@@ -70,16 +71,19 @@ func (r rule) apply(s string) string {
 // It works on decoded values, since encoding hides secrets from the patterns
 // (json.Marshal writes & as &). A string under a sensitive key, or the
 // value of a {"name": <sensitive>, "value": ...} pair such as a Kubernetes
-// env var, is replaced whole. raw is returned unchanged when it holds no
-// secret, and redacted as text when it is not JSON.
+// env var, is replaced whole. raw is returned unchanged when it is empty or
+// holds no secret, and redacted as text when it is not JSON.
 func JSON(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.UseNumber() // numbers keep their exact text
 	var v any
 	if err := d.Decode(&v); err != nil {
 		return json.RawMessage(String(string(raw)))
 	}
-	v, changed := walk(v)
+	v, changed := redactValue(v)
 	if !changed {
 		return raw
 	}
@@ -87,7 +91,9 @@ func JSON(raw json.RawMessage) json.RawMessage {
 	return b
 }
 
-func walk(v any) (any, bool) {
+// redactValue redacts the strings in a decoded JSON value, in place, and
+// reports whether it changed any.
+func redactValue(v any) (any, bool) {
 	switch v := v.(type) {
 	case string:
 		s := String(v)
@@ -96,7 +102,7 @@ func walk(v any) (any, bool) {
 		changed := false
 		for i, e := range v {
 			var c bool
-			v[i], c = walk(e)
+			v[i], c = redactValue(e)
 			changed = changed || c
 		}
 		return v, changed
@@ -104,12 +110,12 @@ func walk(v any) (any, bool) {
 		changed := false
 		name, _ := v["name"].(string)
 		for k, e := range v {
-			if s, ok := e.(string); ok && s != Marker && (sensitive.MatchString(k) || k == "value" && sensitive.MatchString(name)) {
+			if s, ok := e.(string); ok && s != Marker && (isSensitiveName.MatchString(k) || k == "value" && isSensitiveName.MatchString(name)) {
 				v[k], changed = Marker, true
 				continue
 			}
 			var c bool
-			v[k], c = walk(e)
+			v[k], c = redactValue(e)
 			changed = changed || c
 		}
 		return v, changed
