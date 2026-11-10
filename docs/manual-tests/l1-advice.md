@@ -6,6 +6,8 @@ Run it whenever `internal/action`, `internal/executor`, `internal/link`, `intern
 
 Seam tests cover two behaviours that a real model cannot be made to show on demand: a model that names another workload as the target, or states a level, gains nothing; and Advice that fails Gate 1 is not offered for approval. See `internal/controlplane/advice_test.go`.
 
+Validation status: the pipeline's own validation did not run this document's real end-to-end path (real GitHub ticketing and a real model on the demo clusters) because it needs credentials it does not use. That run is a pending captain call. The pipeline covered the Executor dial-out and the kill-switch endpoint against the real binaries, and the Decide, Gate 1, hijacked-target, pod-only, and empty-Advice behaviours through the seam tests. The author's separate earlier live session on the demo clusters is recorded in the run's verification plan.
+
 ## Before you start
 
 - The clusters `ic-target` and `ic-control-plane` exist and run the demo, Sensor, and Control plane (`make status`). This test does not create or delete them. Never run `make down` on clusters other people use.
