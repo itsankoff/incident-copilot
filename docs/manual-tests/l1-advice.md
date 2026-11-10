@@ -4,9 +4,12 @@ This test checks the remediation path of #56 on the two long-lived demo clusters
 
 Run it whenever `internal/action`, `internal/executor`, `internal/link`, `internal/controlplane` (`advice.go`, `decide.go`, `killswitch.go`, `investigate.go`), `internal/kubernetes`, `deploy/executor`, or `deploy/control-plane` change.
 
-Seam tests cover two behaviours that a real model cannot be made to show on demand: a model that names another workload as the target, or states a level, gains nothing; and Advice that fails Gate 1 is not offered for approval. See `internal/controlplane/advice_test.go`.
+Two scenarios are covered by seam tests only and are never run live, because a real model cannot be made to show them on demand:
 
-Validation status: the pipeline's own validation did not run this document's real end-to-end path (real GitHub ticketing and a real model on the demo clusters) because it needs credentials it does not use. That run is a pending captain call. The pipeline covered the Executor dial-out and the kill-switch endpoint against the real binaries, and the Decide, Gate 1, hijacked-target, pod-only, and empty-Advice behaviours through the seam tests. The author's separate earlier live session on the demo clusters is recorded in the run's verification plan.
+- a model that names another workload as the target, or states a level, gains nothing;
+- Advice that fails Gate 1 is not offered for approval.
+
+See `internal/controlplane/advice_test.go`. Every other step below was run live on the demo clusters, with real GitHub ticketing and a real model, before the PR for #56. The no-mistakes pipeline's own validation did not run this end-to-end path: it does not use those credentials and stays off the shared clusters.
 
 ## Before you start
 
