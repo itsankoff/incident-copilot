@@ -76,15 +76,16 @@ func Open(path string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-// live selects every Incident that is not closed, and the latest closed one
-// per Target or key, which a recurrence links to.
-const live = `state != 'closed' OR id IN (SELECT MAX(id) FROM incidents WHERE state = 'closed' GROUP BY target, key)`
+// triageable selects what Triage decides over: every Incident that is not
+// closed, and the latest closed one per Target or key, which a recurrence
+// links to.
+const triageable = `state != 'closed' OR id IN (SELECT MAX(id) FROM incidents WHERE state = 'closed' GROUP BY target, key)`
 
 // Incidents returns, with their members, every Incident that is not closed
 // and the latest closed one per Target or key.
 func (s *Store) Incidents(ctx context.Context) ([]triage.Incident, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, target, key, opened_at, ticket_ref, state, outcome,
-		open_since, updated_at, recurrence_of FROM incidents WHERE `+live+` ORDER BY id`)
+		open_since, updated_at, recurrence_of FROM incidents WHERE `+triageable+` ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +117,7 @@ func (s *Store) Incidents(ctx context.Context) ([]triage.Incident, error) {
 
 	rows, err = s.db.QueryContext(ctx, `SELECT incident_id, key, starts_at, source_kind, source_instance,
 		name, severity, link, first_seen, last_seen, end_outcome, ended_at FROM members
-		WHERE incident_id IN (SELECT id FROM incidents WHERE `+live+`) ORDER BY incident_id, first_seen, rowid`)
+		WHERE incident_id IN (SELECT id FROM incidents WHERE `+triageable+`) ORDER BY incident_id, first_seen, rowid`)
 	if err != nil {
 		return nil, err
 	}

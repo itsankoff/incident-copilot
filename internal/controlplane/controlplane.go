@@ -53,12 +53,15 @@ type Server struct {
 	investigations sync.WaitGroup
 
 	workMu sync.Mutex
-	work   map[int64][]context.CancelCauseFunc // cancels the work started for each Incident
+	work   map[int64]*work // the running work of each Incident
 }
+
+// work is an Incident's running investigation, which stopWork cancels.
+type work struct{ cancel context.CancelCauseFunc }
 
 func New(alertmanager signal.Adapter, st Store, tickets Ticketing, log *audit.Log, now func() time.Time, inv *Investigator) *Server {
 	return &Server{alertmanager: alertmanager, store: st, tickets: tickets, audit: log, now: now, investigator: inv,
-		work: map[int64][]context.CancelCauseFunc{}}
+		work: map[int64]*work{}}
 }
 
 // Wait returns once every investigation started so far has finished.
@@ -71,24 +74,31 @@ const SweepEvery = time.Minute
 // stopWork cancels.
 func (s *Server) startWork(id int64, fn func(ctx context.Context)) {
 	ctx, cancel := context.WithCancelCause(context.Background())
+	w := &work{cancel: cancel}
 	s.workMu.Lock()
-	s.work[id] = append(s.work[id], cancel)
+	s.work[id] = w
 	s.workMu.Unlock()
 	s.investigations.Add(1)
 	go func() {
 		defer s.investigations.Done()
 		fn(ctx)
+		s.workMu.Lock()
+		if s.work[id] == w {
+			delete(s.work, id)
+		}
+		s.workMu.Unlock()
+		cancel(nil)
 	}()
 }
 
-// stopWork cancels all work started for Incident id, with cause.
+// stopWork cancels the work running for Incident id, if any, with cause.
 func (s *Server) stopWork(id int64, cause error) {
 	s.workMu.Lock()
-	cancels := s.work[id]
+	w := s.work[id]
 	delete(s.work, id)
 	s.workMu.Unlock()
-	for _, cancel := range cancels {
-		cancel(cause)
+	if w != nil {
+		w.cancel(cause)
 	}
 }
 
@@ -180,7 +190,7 @@ func (s *Server) ingest(ctx context.Context, sig signal.Signal, now time.Time) e
 	if d.Kind != triage.Drop && d.Incident.ID != 0 {
 		// The ticket's state wins: re-read it before acting on the Incident.
 		i := index(incs, d.Incident.ID)
-		closed, err := s.syncTicket(ctx, incs[i], now)
+		closed, err := s.closeIfTicketClosed(ctx, incs[i], now)
 		if err != nil {
 			return err
 		}
@@ -212,7 +222,7 @@ func (s *Server) Sweep(ctx context.Context) error {
 		if inc.State == triage.StateClosed {
 			continue
 		}
-		closed, err := s.syncTicket(ctx, inc, now)
+		closed, err := s.closeIfTicketClosed(ctx, inc, now)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("incident %d: %w", inc.ID, err))
 			failed[inc.ID] = true
@@ -236,9 +246,9 @@ func (s *Server) Sweep(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// syncTicket re-reads inc's ticket. If a human closed it, it closes inc, stops
-// its work, and returns the closed Incident; otherwise it returns nil.
-func (s *Server) syncTicket(ctx context.Context, inc triage.Incident, now time.Time) (*triage.Incident, error) {
+// closeIfTicketClosed re-reads inc's ticket. If a human closed it, it closes
+// inc, stops its work, and returns the closed Incident; otherwise it returns nil.
+func (s *Server) closeIfTicketClosed(ctx context.Context, inc triage.Incident, now time.Time) (*triage.Incident, error) {
 	if inc.TicketRef == "" {
 		return nil, nil
 	}
@@ -308,11 +318,11 @@ func (s *Server) apply(ctx context.Context, incs []triage.Incident, d triage.Dec
 	comment := ""
 	switch d.Kind {
 	case triage.Open:
-		recurs := ""
+		recurrenceRef := ""
 		if inc.RecurrenceOf != 0 {
-			recurs = incs[index(incs, inc.RecurrenceOf)].TicketRef
+			recurrenceRef = incs[index(incs, inc.RecurrenceOf)].TicketRef
 		}
-		ref, err := s.tickets.Create(ctx, title(inc), body(inc, recurs))
+		ref, err := s.tickets.Create(ctx, title(inc), body(inc, recurrenceRef))
 		if err != nil {
 			return err
 		}
@@ -357,15 +367,13 @@ func (s *Server) apply(ctx context.Context, incs []triage.Incident, d triage.Dec
 			return err
 		}
 	}
-	// The ticket shows the highest severity among the firing Signals.
-	if i := index(incs, inc.ID); i >= 0 && d.Kind != triage.Close {
-		if sev := inc.Severity(); sev != "" && sev != incs[i].Severity() {
-			if err := s.tickets.SetTitle(ctx, inc.TicketRef, title(inc)); err != nil {
-				return err
-			}
-			if err := s.audit.Append(now, "ticket.retitled", inc.ID, map[string]string{"ref": inc.TicketRef, "severity": string(sev)}); err != nil {
-				return err
-			}
+	// The title shows the highest severity among the firing Signals.
+	if i := index(incs, inc.ID); i >= 0 && title(inc) != title(incs[i]) {
+		if err := s.tickets.SetTitle(ctx, inc.TicketRef, title(inc)); err != nil {
+			return err
+		}
+		if err := s.audit.Append(now, "ticket.retitled", inc.ID, map[string]string{"ref": inc.TicketRef, "severity": string(inc.Severity())}); err != nil {
+			return err
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -404,20 +412,25 @@ func index(incs []triage.Incident, id int64) int {
 
 // The ticket shows identifiers only, never Alert annotations.
 
-// title leads with the highest severity among the firing Signals.
+// title leads with the highest severity among the firing Signals, and has
+// none once every Signal has ended.
 func title(inc triage.Incident) string {
+	t := fmt.Sprintf("%s on %s", inc.Members[0].Name, inc.Target)
 	if inc.Target == nil {
-		return fmt.Sprintf("[%s] %s (%s)", inc.Severity(), inc.Members[0].Name, inc.Key)
+		t = fmt.Sprintf("%s (%s)", inc.Members[0].Name, inc.Key)
 	}
-	return fmt.Sprintf("[%s] %s on %s", inc.Severity(), inc.Members[0].Name, inc.Target)
+	if sev := inc.Severity(); sev != "" {
+		t = "[" + string(sev) + "] " + t
+	}
+	return t
 }
 
-// body is the ticket's opening text; recurs is the ticket of the Incident it
-// is a recurrence of, if any.
-func body(inc triage.Incident, recurs string) string {
+// body is the ticket's opening text; recurrenceRef is the ticket of the
+// Incident it is a recurrence of, if any.
+func body(inc triage.Incident, recurrenceRef string) string {
 	var b strings.Builder
 	if inc.RecurrenceOf != 0 {
-		fmt.Fprintf(&b, "**Recurrence of:** Incident %d, ticket #%s\n\n", inc.RecurrenceOf, recurs)
+		fmt.Fprintf(&b, "**Recurrence of:** Incident %d, ticket #%s\n\n", inc.RecurrenceOf, recurrenceRef)
 	}
 	if inc.Target == nil {
 		fmt.Fprintf(&b, "**Target:** none. The Signal names no workload; key `%s`.\n\n", inc.Key)

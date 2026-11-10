@@ -265,10 +265,50 @@ func TestTicketSeverityFollowsTheHighestFiringSignal(t *testing.T) {
 	for _, r := range h.tickets.retitled {
 		titles = append(titles, r.title)
 	}
-	if len(titles) != 2 || !strings.HasPrefix(titles[0], "[critical] ") || !strings.HasPrefix(titles[1], "[warning] ") {
-		t.Fatalf("retitled %q, want critical, then warning, then nothing once all ended", titles)
+	want := []string{
+		"[critical] KubeDeploymentReplicasMismatch on prod/demo/Deployment/orders",
+		"[warning] KubeDeploymentReplicasMismatch on prod/demo/Deployment/orders",
+		"KubeDeploymentReplicasMismatch on prod/demo/Deployment/orders", // nothing fires
 	}
-	if n := len(ofType(h.auditLog(), "ticket.retitled")); n != 2 {
-		t.Errorf("%d ticket.retitled audited, want 2", n)
+	if strings.Join(titles, "|") != strings.Join(want, "|") {
+		t.Fatalf("retitled %q, want %q", titles, want)
+	}
+	if n := len(ofType(h.auditLog(), "ticket.retitled")); n != 3 {
+		t.Errorf("%d ticket.retitled audited, want 3", n)
+	}
+
+	// A reopen at the same severity as the last firing title shows it again.
+	h.send(tokenProd, startingAt(warn, t0.Add(time.Hour)))
+	if n := len(h.tickets.retitled); n != 4 || !strings.HasPrefix(h.tickets.retitled[3].title, "[warning] ") {
+		t.Errorf("after the reopen: retitled %+v", h.tickets.retitled)
+	}
+}
+
+// gatedLLM submits an empty RCA once release is closed, after closing started.
+type gatedLLM struct{ started, release chan struct{} }
+
+func (g *gatedLLM) Complete(context.Context, llm.Request) (llm.Response, error) {
+	close(g.started)
+	<-g.release
+	resp := submit(RCA{Confidence: Confidence{Level: "low"}})
+	resp.Model = "vendor/model"
+	return resp, nil
+}
+
+func TestRCAIsNotPostedOnATicketClosedBeforeTheSweep(t *testing.T) {
+	model := &gatedLLM{started: make(chan struct{}), release: make(chan struct{})}
+	h := startRCA(t, model, &fakeLink{}, testBudget)
+	h.send(tokenProd, alert("KubePodCrashLooping", "aaa", orders))
+	<-model.started
+	h.tickets.closeByHuman("1", "completed")
+	close(model.release)
+	h.cp.Wait()
+
+	if c := h.tickets.commentsOn("1"); len(c) != 0 {
+		t.Errorf("RCA posted on the closed ticket: %q", c)
+	}
+	cancelled := ofType(h.auditLog(), "investigation.cancelled")
+	if len(cancelled) != 1 || !strings.Contains(string(cancelled[0].Data), "closed by a human") {
+		t.Errorf("investigation.cancelled %+v, want one saying why", cancelled)
 	}
 }
