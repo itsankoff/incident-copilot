@@ -1,17 +1,22 @@
 // Package sensor is the Sensor role: it dials out to the Control plane, keeps
-// the link up, and answers Evidence queries with the Location's tools. It keeps
-// no state, calls no LLM, and changes nothing (ADR 0002 D2).
+// the link up, answers Evidence queries with the Location's tools, and runs
+// the Location's Detectors, sending their Signals over the link. It keeps no
+// state across restarts, calls no LLM, and changes nothing (ADR 0002 D2).
 package sensor
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/itsankoff/incident-copilot/internal/evidence"
 	"github.com/itsankoff/incident-copilot/internal/redact"
+	"github.com/itsankoff/incident-copilot/internal/signal"
 )
 
 // Config is the Sensor's configuration.
@@ -19,16 +24,19 @@ type Config struct {
 	Location        string
 	ControlPlaneURL string
 	Token           string
+	Namespaces      []string // the namespace allowlist the Detectors watch
 }
 
 // LoadConfig builds a Config from environment variables read through getenv.
 func LoadConfig(getenv func(string) string) (Config, error) {
 	cfg := Config{Location: getenv("IC_SENSOR_LOCATION"), ControlPlaneURL: getenv("IC_CONTROL_PLANE_URL"), Token: getenv("IC_SENSOR_TOKEN")}
-	for key, v := range map[string]string{"IC_SENSOR_LOCATION": cfg.Location, "IC_CONTROL_PLANE_URL": cfg.ControlPlaneURL, "IC_SENSOR_TOKEN": cfg.Token} {
+	namespaces := getenv("IC_SENSOR_NAMESPACES") // comma-separated
+	for key, v := range map[string]string{"IC_SENSOR_LOCATION": cfg.Location, "IC_CONTROL_PLANE_URL": cfg.ControlPlaneURL, "IC_SENSOR_TOKEN": cfg.Token, "IC_SENSOR_NAMESPACES": namespaces} {
 		if v == "" {
 			return Config{}, fmt.Errorf("%s: required", key)
 		}
 	}
+	cfg.Namespaces = strings.Split(namespaces, ",")
 	return cfg, nil
 }
 
@@ -36,33 +44,94 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 type Link interface {
 	Next(ctx context.Context) (evidence.Call, bool, error)
 	Reply(ctx context.Context, id string, a evidence.Answer) error
+	Send(ctx context.Context, s signal.Signal) error
 }
 
-// Sensor answers Calls from its Link.
+// Detector is one built-in rule a Sensor runs against its Location (ADR 0002
+// D5). Platform packages implement it; the Sensor owns sending its Signals.
+type Detector interface {
+	// Check reads the Location at now and returns the Signals that started
+	// firing or resolved since the last Check, at most one per Target, each
+	// with its Target set. On start it rebuilds what is firing from the
+	// Location's current state.
+	Check(ctx context.Context, now time.Time) ([]signal.Signal, error)
+}
+
+// Resend is how often a firing Detector Signal is sent again, so a dead
+// Sensor's Signals expire instead of hanging open (ADR 0002 D5).
+const Resend = 5 * time.Minute
+
+// Sensor answers Calls from its Link and sends its Detectors' Signals over it.
 type Sensor struct {
 	// Retry is the wait after a failed or refused poll.
 	Retry time.Duration
+	// DetectEvery is how often the Detectors run.
+	DetectEvery time.Duration
 
-	link   Link
-	tools  map[string]evidence.Tool
-	logger *slog.Logger
+	link      Link
+	tools     map[string]evidence.Tool
+	detectors []Detector
+	logger    *slog.Logger
+
+	signals map[string]outgoing // by key: firing, or resolved and not yet sent
 }
 
-func New(l Link, tools []evidence.Tool, logger *slog.Logger) *Sensor {
-	s := &Sensor{Retry: 5 * time.Second, link: l, tools: map[string]evidence.Tool{}, logger: logger}
+type outgoing struct {
+	signal signal.Signal
+	sentAt time.Time // zero until sent
+}
+
+func New(l Link, tools []evidence.Tool, detectors []Detector, logger *slog.Logger) *Sensor {
+	s := &Sensor{Retry: 5 * time.Second, DetectEvery: 10 * time.Second, link: l, tools: map[string]evidence.Tool{},
+		detectors: detectors, logger: logger, signals: map[string]outgoing{}}
 	for _, t := range tools {
 		s.tools[t.Name()] = t
 	}
 	return s
 }
 
-// Run keeps the link up until ctx ends. Calls run concurrently, so a slow one
-// never stops the polls that keep the Location online. It logs link.up on the
-// first poll that gets through after start or after a failure, and link.down
-// on every failed poll.
+// Detect runs every Detector at now and sends what is due: each Signal that
+// changed, and each firing Signal last sent Resend ago. A failed send is
+// retried at the next Detect. Run calls it every DetectEvery.
+func (s *Sensor) Detect(ctx context.Context, now time.Time) {
+	for _, d := range s.detectors {
+		sigs, err := d.Check(ctx, now)
+		if err != nil {
+			s.logger.Warn("detector failed: " + err.Error())
+			continue
+		}
+		for _, sig := range sigs {
+			s.signals[sig.Key] = outgoing{signal: sig}
+		}
+	}
+	for _, key := range slices.Sorted(maps.Keys(s.signals)) {
+		o := s.signals[key]
+		if !o.sentAt.IsZero() && now.Sub(o.sentAt) < Resend {
+			continue
+		}
+		if err := s.link.Send(ctx, o.signal); err != nil {
+			s.logger.Warn("signal send failed: "+err.Error(), "key", key)
+			continue
+		}
+		if o.signal.Status != signal.Firing {
+			delete(s.signals, key)
+			continue
+		}
+		o.sentAt = now
+		s.signals[key] = o
+	}
+}
+
+// Run keeps the link up and runs the Detectors until ctx ends. Calls run
+// concurrently, so a slow one never stops the polls that keep the Location
+// online. It logs link.up on the first poll that gets through after start or
+// after a failure, and link.down on every failed poll.
 func (s *Sensor) Run(ctx context.Context) {
 	var running sync.WaitGroup
 	defer running.Wait()
+	if len(s.detectors) > 0 {
+		running.Go(func() { s.detect(ctx) })
+	}
 	up := false
 	for ctx.Err() == nil {
 		call, ok, err := s.link.Next(ctx)
@@ -83,6 +152,19 @@ func (s *Sensor) Run(ctx context.Context) {
 		}
 		if ok {
 			running.Go(func() { s.answer(ctx, call) })
+		}
+	}
+}
+
+func (s *Sensor) detect(ctx context.Context) {
+	tick := time.NewTicker(s.DetectEvery)
+	defer tick.Stop()
+	for {
+		s.Detect(ctx, time.Now())
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
 		}
 	}
 }

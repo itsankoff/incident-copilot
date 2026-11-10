@@ -6,24 +6,27 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/itsankoff/incident-copilot/internal/evidence"
+	"github.com/itsankoff/incident-copilot/internal/signal"
 )
 
-// fakeLink hands out calls once each and records the replies.
-type fakeLink struct {
+// answerLink hands out calls once each and records the replies.
+type answerLink struct {
 	mu      sync.Mutex
 	calls   []evidence.Call
 	replies map[string]evidence.Answer
 	done    chan struct{}
 }
 
-func (f *fakeLink) Next(ctx context.Context) (evidence.Call, bool, error) {
+func (f *answerLink) Next(ctx context.Context) (evidence.Call, bool, error) {
 	f.mu.Lock()
 	if len(f.calls) == 0 {
 		f.mu.Unlock()
@@ -36,7 +39,9 @@ func (f *fakeLink) Next(ctx context.Context) (evidence.Call, bool, error) {
 	return c, true, nil
 }
 
-func (f *fakeLink) Reply(_ context.Context, id string, a evidence.Answer) error {
+func (f *answerLink) Send(context.Context, signal.Signal) error { return nil }
+
+func (f *answerLink) Reply(_ context.Context, id string, a evidence.Answer) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.replies[id] = a
@@ -46,14 +51,14 @@ func (f *fakeLink) Reply(_ context.Context, id string, a evidence.Answer) error 
 	return nil
 }
 
-type fakeTool struct {
+type answerTool struct {
 	name string
 	data string
 	err  error
 }
 
-func (t fakeTool) Name() string { return t.name }
-func (t fakeTool) Run(context.Context, evidence.Query) (json.RawMessage, error) {
+func (t answerTool) Name() string { return t.name }
+func (t answerTool) Run(context.Context, evidence.Query) (json.RawMessage, error) {
 	return json.RawMessage(t.data), t.err
 }
 
@@ -65,18 +70,18 @@ var (
 // The Sensor is the edge that fetches the data, so it redacts what its tools
 // return, data and error text alike, before anything leaves the Location.
 func TestTheSensorRedactsAnswersBeforeReplying(t *testing.T) {
-	l := &fakeLink{
+	l := &answerLink{
 		calls:   []evidence.Call{{ID: "c1", Query: evidence.Query{Tool: "logs"}}, {ID: "c2", Query: evidence.Query{Tool: "broken"}}},
 		replies: map[string]evidence.Answer{},
 		done:    make(chan struct{}),
 	}
 	tools := []evidence.Tool{
-		fakeTool{name: "logs", data: `[{"message":"using ` + awsKey + ` from https://b/o?a=1&X-Amz-Signature=abc123"}]`},
-		fakeTool{name: "broken", err: errors.New("GET failed: token=" + ghTok)},
+		answerTool{name: "logs", data: `[{"message":"using ` + awsKey + ` from https://b/o?a=1&X-Amz-Signature=abc123"}]`},
+		answerTool{name: "broken", err: errors.New("GET failed: token=" + ghTok)},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { <-l.done; cancel() }()
-	New(l, tools, slog.New(slog.NewTextHandler(io.Discard, nil))).Run(ctx)
+	New(l, tools, nil, slog.New(slog.NewTextHandler(io.Discard, nil))).Run(ctx)
 
 	data, errText := string(l.replies["c1"].Data), l.replies["c2"].Error
 	for _, secret := range []string{awsKey, "abc123", ghTok} {
@@ -111,12 +116,14 @@ func (l *scriptedLink) Next(context.Context) (evidence.Call, bool, error) {
 
 func (l *scriptedLink) Reply(context.Context, string, evidence.Answer) error { return nil }
 
+func (l *scriptedLink) Send(context.Context, signal.Signal) error { return nil }
+
 func TestSensorLogsLinkUpOnConnectAndAfterAReconnect(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	down := errors.New("refused by the Control plane")
 	l := &scriptedLink{polls: []error{down, nil, nil, down, down, nil, nil}, cancel: cancel}
 	var logs bytes.Buffer
-	s := New(l, nil, slog.New(slog.NewJSONHandler(&logs, nil)))
+	s := New(l, nil, nil, slog.New(slog.NewJSONHandler(&logs, nil)))
 	s.Retry = 0
 	s.Run(ctx)
 
@@ -139,6 +146,75 @@ func TestSensorLogsLinkUpOnConnectAndAfterAReconnect(t *testing.T) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("logged %q, want %q", got, want)
+		}
+	}
+}
+
+var t0 = time.Date(2026, 10, 21, 3, 0, 0, 0, time.UTC)
+
+// fakeLink records the Signals sent over it; while down, every send fails.
+type fakeLink struct {
+	sent []string
+	down bool
+}
+
+func (f *fakeLink) Next(ctx context.Context) (evidence.Call, bool, error) {
+	<-ctx.Done()
+	return evidence.Call{}, false, ctx.Err()
+}
+
+func (f *fakeLink) Reply(context.Context, string, evidence.Answer) error { return nil }
+
+func (f *fakeLink) Send(_ context.Context, s signal.Signal) error {
+	if f.down {
+		return errors.New("link down")
+	}
+	f.sent = append(f.sent, fmt.Sprintf("%s %s", s.Key, s.Status))
+	return nil
+}
+
+// fakeDetector returns, at each Check, the Signals scripted for that time.
+type fakeDetector map[time.Time][]signal.Signal
+
+func (f fakeDetector) Check(_ context.Context, now time.Time) ([]signal.Signal, error) {
+	return f[now], nil
+}
+
+func sig(key string, status signal.Status) signal.Signal {
+	return signal.Signal{Key: key, Status: status}
+}
+
+func TestSensorResendsFiringSignalsEveryFiveMinutes(t *testing.T) {
+	const m = time.Minute
+	at := func(d time.Duration) time.Time { return t0.Add(d) }
+	det := fakeDetector{
+		at(0):      {sig("a", signal.Firing)},
+		at(2 * m):  {sig("b", signal.Firing)},
+		at(6 * m):  {sig("a", signal.Resolved)},
+		at(11 * m): {sig("c", signal.Firing)},
+	}
+	l := &fakeLink{}
+	s := New(l, nil, []Detector{det}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	for _, step := range []struct {
+		at   time.Duration
+		down bool
+		want []string
+	}{
+		{at: 0, want: []string{"a firing"}},
+		{at: 2 * m, want: []string{"b firing"}},
+		{at: 4*m + 59*time.Second},
+		{at: 5 * m, want: []string{"a firing"}},
+		{at: 6 * m, want: []string{"a resolved"}},
+		{at: 7 * m, want: []string{"b firing"}},
+		{at: 10 * m}, // a's resolution is never re-sent
+		{at: 11 * m, down: true},
+		{at: 12 * m, want: []string{"b firing", "c firing"}}, // a failed send is retried
+	} {
+		l.down, l.sent = step.down, nil
+		s.Detect(context.Background(), t0.Add(step.at))
+		if fmt.Sprint(l.sent) != fmt.Sprint(step.want) {
+			t.Errorf("at %s: sent %q, want %q", step.at, l.sent, step.want)
 		}
 	}
 }

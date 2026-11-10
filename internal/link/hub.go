@@ -5,7 +5,8 @@
 //
 // A Sensor's poll is GET /link/{location}/next, answered with the next Call
 // or, after PollHold, 204. A Sensor replies with POST
-// /link/{location}/replies/{id}.
+// /link/{location}/replies/{id}, and sends a Detector Signal with POST
+// /link/{location}/signals.
 //
 // An Executor's poll is POST /link/{location}/executor/next carrying its
 // Action catalog, answered after PollHold with 204: nothing runs yet (#57).
@@ -63,6 +64,9 @@ type executorLink struct {
 type Hub struct {
 	// PollHold is how long a poll waits for a Call.
 	PollHold time.Duration
+	// Signals takes in each Detector Signal a Sensor sends, once the link has
+	// authenticated it as location's Sensor. Set it before serving.
+	Signals func(w http.ResponseWriter, r *http.Request, location string)
 
 	audit *audit.Log
 	now   func() time.Time
@@ -186,6 +190,7 @@ func (h *Hub) Handler() http.Handler {
 	mux.HandleFunc("GET /link/{location}/next", h.next)
 	mux.HandleFunc("POST /link/{location}/replies/{id}", h.reply)
 	mux.HandleFunc("POST /link/{location}/executor/next", h.pollExecutor)
+	mux.HandleFunc("POST /link/{location}/signals", h.signals)
 	return mux
 }
 
@@ -315,6 +320,12 @@ func (h *Hub) reply(w http.ResponseWriter, r *http.Request) {
 	default: // already answered
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Hub) signals(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.authenticate(w, r); ok {
+		h.Signals(w, r, r.PathValue("location"))
+	}
 }
 
 // authenticate checks the Location exists and the token is its own. Both

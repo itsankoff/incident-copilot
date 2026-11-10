@@ -8,10 +8,12 @@ package controlplane
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -181,6 +183,46 @@ func (s *Server) intake(a signal.Adapter) http.HandlerFunc {
 			}
 		}
 	}
+}
+
+// SensorSignal takes in one Detector Signal from location's Sensor, which the
+// link has authenticated. The Signal is accepted only if its Target is in that
+// Location (ADR 0003 D5); the Control plane sets its source, key, and
+// receivedAt.
+func (s *Server) SensorSignal(w http.ResponseWriter, r *http.Request, location string) {
+	now := s.now()
+	ref := signal.SourceRef{Kind: "sensor", Instance: location}
+	reject := func(code int, event, reason string, extra map[string]any) {
+		data := map[string]any{"source": ref, "reason": reason}
+		maps.Copy(data, extra)
+		if err := s.audit.Append(now, event, 0, data); err != nil {
+			http.Error(w, "audit", http.StatusInternalServerError)
+			return
+		}
+		http.Error(w, reason, code)
+	}
+
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
+	if err != nil {
+		reject(http.StatusBadRequest, "request.rejected", "unreadable body: "+err.Error(), nil)
+		return
+	}
+	var sig signal.Signal
+	if err := json.Unmarshal(body, &sig); err != nil {
+		reject(http.StatusBadRequest, "request.rejected", err.Error(), nil)
+		return
+	}
+	if sig.Target == nil || sig.Target.Location != location {
+		reject(http.StatusForbidden, "signal.rejected", "Target in another Location than the Sensor's", map[string]any{"key": sig.Key, "name": sig.Name, "target": sig.Target})
+		return
+	}
+	sig.Source, sig.ReceivedAt, sig.Raw = ref, now, body
+	sig.Key = signal.DetectorKey(sig.Name, *sig.Target)
+	if err := s.ingest(r.Context(), signal.Bound(sig), now); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ingest triages one Signal, stores the result, and brings its ticket up to date.

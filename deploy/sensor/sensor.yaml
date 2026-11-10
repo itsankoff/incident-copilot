@@ -25,6 +25,7 @@ spec:
             - secretRef: { name: incident-copilot-sensor }
           env:
             - { name: IC_SENSOR_LOCATION, value: ic-target }
+            - { name: IC_SENSOR_NAMESPACES, value: demo }
             - { name: IC_CONTROL_PLANE_URL, value: "http://ic-control-plane-control-plane:30080" }
           resources:
             requests: { cpu: 20m, memory: 32Mi }

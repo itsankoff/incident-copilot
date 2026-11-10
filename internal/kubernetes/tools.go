@@ -1,6 +1,6 @@
 // Package kubernetes is the Kubernetes side of the platform seam: the Sensor's
-// evidence tools and the Executor's Actions (ADR 0002 D6). Only main imports
-// it.
+// evidence tools, Detectors, and the Executor's Actions (ADR 0002 D6). Only
+// main imports it.
 package kubernetes
 
 import (
@@ -15,23 +15,30 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/rest"
 
 	"github.com/itsankoff/incident-copilot/internal/evidence"
+	"github.com/itsankoff/incident-copilot/internal/sensor"
 	"github.com/itsankoff/incident-copilot/internal/signal"
 )
 
-// InCluster returns the tools, reading the API with the pod's ServiceAccount.
-func InCluster() ([]evidence.Tool, error) {
+// InCluster returns the tools, and the Detectors for location's namespaces,
+// reading the API with the pod's ServiceAccount.
+func InCluster(location string, namespaces []string) ([]evidence.Tool, []sensor.Detector, error) {
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	c, err := clientset.NewForConfig(cfg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return Tools(c), nil
+	meta, err := metadata.NewForConfig(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return Tools(c), []sensor.Detector{NewCrashLoop(c, meta, location, namespaces)}, nil
 }
 
 // Tools returns the evidence tools reading through c.
