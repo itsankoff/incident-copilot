@@ -1,11 +1,12 @@
 // Package store keeps the Control plane's state in SQLite: open Incidents,
-// their member Signals, and ticket references.
+// their member Signals, ticket references, and the kill switch.
 package store
 
 import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -35,6 +36,10 @@ CREATE TABLE IF NOT EXISTS members (
 	first_seen      TEXT NOT NULL,
 	last_seen       TEXT NOT NULL,
 	PRIMARY KEY (incident_id, key, starts_at)
+);
+CREATE TABLE IF NOT EXISTS settings (
+	name  TEXT PRIMARY KEY,
+	value TEXT NOT NULL
 );`
 
 type Store struct {
@@ -161,6 +166,23 @@ func (t *Tx) Save(ctx context.Context, inc triage.Incident) (int64, error) {
 // SetTicket records the ticket reference of Incident id.
 func (t *Tx) SetTicket(ctx context.Context, id int64, ref string) error {
 	_, err := t.tx.ExecContext(ctx, `UPDATE incidents SET ticket_ref = ? WHERE id = ?`, ref, id)
+	return err
+}
+
+// KillSwitch returns the kill switch's level, or "" when it is not set.
+func (s *Store) KillSwitch(ctx context.Context) (string, error) {
+	var v string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE name = 'kill_switch'`).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return v, err
+}
+
+// SetKillSwitch sets the kill switch to level; "" clears it.
+func (s *Store) SetKillSwitch(ctx context.Context, level string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO settings (name, value) VALUES ('kill_switch', ?)
+		ON CONFLICT (name) DO UPDATE SET value = excluded.value`, level)
 	return err
 }
 

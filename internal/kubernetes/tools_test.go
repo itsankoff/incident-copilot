@@ -49,13 +49,14 @@ func demoCluster() *fake.Clientset {
 	selector := &metav1.LabelSelector{MatchLabels: map[string]string{"app": "orders"}}
 	return fake.NewClientset(
 		&appsv1.Deployment{
-			ObjectMeta: meta("orders", "dep-1", nil),
+			ObjectMeta: annotated(meta("orders", "dep-1", nil), "4"),
 			Spec:       appsv1.DeploymentSpec{Replicas: &replicas, Selector: selector},
 			Status: appsv1.DeploymentStatus{Conditions: []appsv1.DeploymentCondition{
 				{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionFalse, Reason: "MinimumReplicasUnavailable"},
 			}},
 		},
-		&appsv1.ReplicaSet{ObjectMeta: meta("orders-abc", "rs-1", owner("Deployment", "orders", "dep-1"))},
+		&appsv1.ReplicaSet{ObjectMeta: annotated(meta("orders-abc", "rs-1", owner("Deployment", "orders", "dep-1")), "4"), Spec: rsSpec("orders:v4")},
+		&appsv1.ReplicaSet{ObjectMeta: annotated(meta("orders-old", "rs-0", owner("Deployment", "orders", "dep-1")), "3"), Spec: rsSpec("orders:v3")},
 		&corev1.Pod{
 			ObjectMeta: meta("orders-abc-1", "pod-1", owner("ReplicaSet", "orders-abc", "rs-1")),
 			Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{
@@ -68,6 +69,49 @@ func demoCluster() *fake.Clientset {
 		event("on-stranger", "Pod", "stranger", t0.Add(-time.Minute)),
 		event("too-old", "Pod", "orders-abc-1", t0.Add(-3*time.Hour)),
 	)
+}
+
+func annotated(m metav1.ObjectMeta, revision string) metav1.ObjectMeta {
+	m.Annotations = map[string]string{"deployment.kubernetes.io/revision": revision}
+	return m
+}
+
+func rsSpec(image string) appsv1.ReplicaSetSpec {
+	return appsv1.ReplicaSetSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "orders", Image: image}}}}}
+}
+
+// rollback_deployment's revision argument must cite evidence, so the
+// Deployment's state names its revisions.
+func TestWorkloadStateNamesADeploymentsRevisions(t *testing.T) {
+	raw, err := find(t, "workload_state").Run(context.Background(), evidence.Query{Tool: "workload_state", Target: orders})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Revision    string `json:"revision"`
+		ReplicaSets []struct {
+			Name     string   `json:"name"`
+			Revision string   `json:"revision"`
+			Images   []string `json:"images"`
+		} `json:"replicaSets"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	rs := got.ReplicaSets
+	if got.Revision != "4" || len(rs) != 2 || rs[0].Name != "orders-old" || rs[0].Revision != "3" || rs[0].Images[0] != "orders:v3" || rs[1].Revision != "4" {
+		t.Errorf("revisions = %s", raw)
+	}
+}
+
+func TestRollbackDeploymentByHand(t *testing.T) {
+	d := RollbackDeployment
+	if r := d.CheckArgs(json.RawMessage(`{"revision":3}`)); len(r) != 0 || !d.Accepts("Deployment") || d.Accepts("StatefulSet") {
+		t.Fatalf("declaration refuses a valid step: %v", r)
+	}
+	if got, want := d.ByHandFor(orders, json.RawMessage(`{"revision":3}`)), "kubectl -n demo rollout undo deployment/orders --to-revision=3"; got != want {
+		t.Errorf("by hand = %q, want %q", got, want)
+	}
 }
 
 func find(t *testing.T, name string) evidence.Tool {

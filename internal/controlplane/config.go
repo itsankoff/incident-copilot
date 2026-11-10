@@ -21,6 +21,7 @@ type Config struct {
 	GitHub       *GitHub // nil: the fake ticketing adapter
 	LLM          *LLM    // nil: Incidents are not investigated
 	Locations    []Location
+	Policy       Policy // autonomy ceilings per Environment
 	DebugAddr    string // loopback only: see Evidence.DebugHandler
 }
 
@@ -109,7 +110,36 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	if cfg.Locations, err = parseLocations(getenv("IC_LOCATIONS")); err != nil {
 		return Config{}, err
 	}
+	cfg.Policy = parsePolicy(getenv("IC_ENVIRONMENT_CEILINGS"))
 	return cfg, nil
+}
+
+// parsePolicy reads comma-separated environment:level entries. A missing or
+// unparseable policy does not stop the Control plane: it fails closed, at a
+// ceiling of L1 (ADR 0003 D3).
+func parsePolicy(s string) Policy {
+	if s == "" {
+		return Policy{Problem: "is not configured (IC_ENVIRONMENT_CEILINGS)"}
+	}
+	bad := func(format string, args ...any) Policy {
+		return Policy{Problem: "is unparseable (IC_ENVIRONMENT_CEILINGS): " + fmt.Sprintf(format, args...)}
+	}
+	ceilings := map[string]Level{}
+	for _, entry := range strings.Split(s, ",") {
+		env, level, ok := strings.Cut(entry, ":")
+		if !ok || env == "" {
+			return bad("entry %q: want environment:level", entry)
+		}
+		if _, dup := ceilings[env]; dup {
+			return bad("environment %s: named twice", env)
+		}
+		l, err := ParseLevel(level)
+		if err != nil {
+			return bad("environment %s: %v", env, err)
+		}
+		ceilings[env] = l
+	}
+	return Policy{Ceilings: ceilings}
 }
 
 func positiveInt(s string) (int, error) {

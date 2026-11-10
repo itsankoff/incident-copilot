@@ -10,10 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/itsankoff/incident-copilot/internal/action"
 	"github.com/itsankoff/incident-copilot/internal/evidence"
 )
 
-// Client is a Sensor's end of its link.
+// Client is a Sensor's or an Executor's end of its link.
 type Client struct {
 	url, location, token string
 	http                 *http.Client
@@ -57,6 +58,24 @@ func (c *Client) Next(ctx context.Context) (call evidence.Call, ok bool, err err
 		return call, err == nil, err
 	}
 	return evidence.Call{}, false, fmt.Errorf("poll: status %d", resp.StatusCode)
+}
+
+// Poll is one Executor poll: it advertises actions and returns once the
+// Control plane releases the poll.
+func (c *Client) Poll(ctx context.Context, actions []action.Declaration) error {
+	body, err := json.Marshal(catalog{actions})
+	if err != nil {
+		return err
+	}
+	resp, err := c.do(ctx, http.MethodPost, "/executor/next", body)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("poll: status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // Reply sends the Answer to Call id.

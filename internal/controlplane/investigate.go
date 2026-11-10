@@ -30,19 +30,21 @@ type Budget struct {
 }
 
 // Investigator runs the RCA loop for an Incident and writes its RCA into the
-// Incident's ticket (ADR 0002 D7).
+// Incident's ticket (ADR 0002 D7), then runs the remediation loop and writes
+// its Advice there too (ADR 0002 D8).
 type Investigator struct {
 	llm      llm.Client
 	model    string // configured; a router may answer with another
-	budget   Budget
+	budget   Budget // for each loop
 	evidence *Evidence
+	rem      Remediation
 	tickets  Ticketing
 	audit    *audit.Log
 	now      func() time.Time
 }
 
-func NewInvestigator(c llm.Client, model string, b Budget, ev *Evidence, tickets Ticketing, log *audit.Log, now func() time.Time) *Investigator {
-	return &Investigator{llm: c, model: model, budget: b, evidence: ev, tickets: tickets, audit: log, now: now}
+func NewInvestigator(c llm.Client, model string, b Budget, ev *Evidence, rem Remediation, tickets Ticketing, log *audit.Log, now func() time.Time) *Investigator {
+	return &Investigator{llm: c, model: model, budget: b, evidence: ev, rem: rem, tickets: tickets, audit: log, now: now}
 }
 
 const submitTool = "submit_rca"
@@ -104,14 +106,33 @@ type ledgerEntry struct {
 	OK   bool
 }
 
-// investigation is what the loop leaves behind.
+// loopSpec is one LLM loop: its prompt, the tool that ends it, and how a
+// submission is read.
+type loopSpec struct {
+	promptVersion string
+	system, brief string
+	submit        llm.ToolSpec
+	what          string // what a submission is, such as RCA
+	nudge         string // sent when the model answers without a tool call
+	// accept reads a submission's arguments. An error goes back to the model,
+	// which may submit again.
+	accept func(arguments string) error
+}
+
+// loopRun is what a loop leaves behind.
+type loopRun struct {
+	submitted bool // false when a budget or an error ended it first
+	ledger    []ledgerEntry
+	stopped   string
+	models    []string // the model that answered each request
+	steps     int
+	tokens    int
+}
+
+// investigation is what the RCA loop leaves behind.
 type investigation struct {
-	rca     *RCA // nil when no answer came before a budget or an error ended it
-	ledger  []ledgerEntry
-	stopped string
-	models  []string // the model that answered each request
-	steps   int
-	tokens  int
+	rca *RCA // nil when no answer came before a budget or an error ended it
+	loopRun
 }
 
 // Run investigates inc, runs Gate 1 on the answer, and comments the RCA on
@@ -119,7 +140,10 @@ type investigation struct {
 func (v *Investigator) Run(ctx context.Context, inc triage.Incident) error {
 	if inc.Target == nil {
 		// The Evidence tools read a Target; with none there is nothing to read.
-		return v.audit.Append(v.now(), "investigation.skipped", inc.ID, map[string]string{"reason": "the Incident has no Target"})
+		if err := v.audit.Append(v.now(), "investigation.skipped", inc.ID, map[string]string{"reason": "the Incident has no Target"}); err != nil {
+			return err
+		}
+		return v.advise(ctx, inc, nil, nil, "")
 	}
 	if err := v.audit.Append(v.now(), "investigation.started", inc.ID, map[string]any{
 		"model": v.model, "promptVersion": PromptVersion, "budget": v.budget,
@@ -127,7 +151,20 @@ func (v *Investigator) Run(ctx context.Context, inc triage.Incident) error {
 	}); err != nil {
 		return err
 	}
-	inv, err := v.loop(ctx, inc)
+	var inv investigation
+	var err error
+	inv.loopRun, err = v.loop(ctx, inc, loopSpec{
+		promptVersion: PromptVersion, system: systemPrompt, brief: incidentBrief(inc), submit: submitSpec, what: "RCA",
+		nudge: "Call submit_rca with your root-cause analysis.",
+		accept: func(arguments string) error {
+			var r RCA
+			if err := json.Unmarshal([]byte(arguments), &r); err != nil {
+				return err
+			}
+			inv.rca = &r
+			return nil
+		},
+	})
 	if err != nil {
 		return err
 	}
@@ -148,19 +185,22 @@ func (v *Investigator) Run(ctx context.Context, inc triage.Incident) error {
 	if err := v.tickets.Comment(ctx, inc.TicketRef, v.render(inv, failures)); err != nil {
 		return err
 	}
-	return v.audit.Append(v.now(), "ticket.commented", inc.ID, map[string]string{"ref": inc.TicketRef, "kind": "rca"})
+	if err := v.audit.Append(v.now(), "ticket.commented", inc.ID, map[string]string{"ref": inc.TicketRef, "kind": "rca"}); err != nil {
+		return err
+	}
+	return v.advise(ctx, inc, inv.rca, inv.ledger, confidence(inv, failures))
 }
 
-// loop talks to the model until it submits an RCA or a budget runs out. It
-// returns an error only when the audit log cannot be written.
-func (v *Investigator) loop(ctx context.Context, inc triage.Incident) (investigation, error) {
+// loop talks to the model until it makes an accepted submission or a budget
+// runs out. It returns an error only when the audit log cannot be written.
+func (v *Investigator) loop(ctx context.Context, inc triage.Incident, spec loopSpec) (loopRun, error) {
 	ctx, cancel := context.WithTimeout(ctx, v.budget.Time)
 	defer cancel()
-	var inv investigation
-	msgs := []llm.Message{{Role: llm.System, Content: systemPrompt}, {Role: llm.User, Content: incidentBrief(inc)}}
-	tools := append(slices.Clone(evidenceTools), submitSpec)
+	var inv loopRun
+	msgs := []llm.Message{{Role: llm.System, Content: spec.system}, {Role: llm.User, Content: spec.brief}}
+	tools := append(slices.Clone(evidenceTools), spec.submit)
 
-	for inv.rca == nil {
+	for !inv.submitted {
 		switch {
 		case inv.steps >= v.budget.Steps:
 			inv.stopped = fmt.Sprintf("step budget of %d ran out", v.budget.Steps)
@@ -172,7 +212,7 @@ func (v *Investigator) loop(ctx context.Context, inc triage.Incident) (investiga
 		inv.steps++
 		req := llm.Request{Model: v.model, Messages: msgs, Tools: tools}
 		if err := v.audit.Append(v.now(), "llm.request", inc.ID, map[string]any{
-			"step": inv.steps, "model": v.model, "promptVersion": PromptVersion, "messages": auditMessages(msgs), "tools": toolNames(tools),
+			"step": inv.steps, "model": v.model, "promptVersion": spec.promptVersion, "messages": auditMessages(msgs), "tools": toolNames(tools),
 		}); err != nil {
 			return inv, err
 		}
@@ -198,32 +238,31 @@ func (v *Investigator) loop(ctx context.Context, inc triage.Incident) (investiga
 		msgs = append(msgs, resp.Message)
 
 		if len(resp.Message.ToolCalls) == 0 {
-			msgs = append(msgs, llm.Message{Role: llm.User, Content: "Call submit_rca with your root-cause analysis."})
+			msgs = append(msgs, llm.Message{Role: llm.User, Content: spec.nudge})
 			continue
 		}
 		for _, tc := range resp.Message.ToolCalls {
-			content, err := v.toolResult(ctx, inc, tc, &inv)
+			content, err := v.toolResult(ctx, inc, spec, tc, &inv)
 			if err != nil {
 				return inv, err
 			}
 			msgs = append(msgs, llm.Message{Role: llm.Tool, ToolCallID: tc.ID, Content: content})
 		}
 	}
-	inv.stopped = "the model submitted its RCA"
+	inv.stopped = "the model submitted its " + spec.what
 	return inv, nil
 }
 
 // toolResult runs one tool call and returns what the model reads back. It
 // returns an error only when the audit log cannot be written.
-func (v *Investigator) toolResult(ctx context.Context, inc triage.Incident, tc llm.ToolCall, inv *investigation) (string, error) {
-	if tc.Name == submitTool {
-		var r RCA
-		if err := json.Unmarshal([]byte(tc.Arguments), &r); err != nil {
+func (v *Investigator) toolResult(ctx context.Context, inc triage.Incident, spec loopSpec, tc llm.ToolCall, inv *loopRun) (string, error) {
+	if tc.Name == spec.submit.Name {
+		if err := spec.accept(tc.Arguments); err != nil {
 			// The decoder's message names the field that did not match.
-			b, _ := json.Marshal(map[string]string{"error": "arguments do not match the submit_rca schema: " + err.Error()})
+			b, _ := json.Marshal(map[string]string{"error": "arguments do not match the " + spec.submit.Name + " schema: " + err.Error()})
 			return string(b), nil
 		}
-		inv.rca = &r
+		inv.submitted = true
 		return `{"ok":true}`, nil
 	}
 	if !slices.ContainsFunc(evidenceTools, func(t llm.ToolSpec) bool { return t.Name == tc.Name }) {
