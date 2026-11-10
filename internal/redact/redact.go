@@ -27,7 +27,9 @@ var rules = []rule{
 	{regexp.MustCompile(`(?i)\bbearer\s+([A-Za-z0-9._~+/=-]{20,})`)},
 	{regexp.MustCompile(`\b(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b`)},
 	{regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`)},
-	{regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36}\b|\bgithub_pat_[A-Za-z0-9_]{22,}`)},
+	// GitHub tokens are 36 characters after the prefix today, but GitHub says
+	// the length may change, so a looser bound misses fewer.
+	{regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{30,}\b|\bgithub_pat_[A-Za-z0-9_]{22,}`)},
 	// Pre-signed URLs: S3, GCS, Azure SAS (GitHub job-log links), CloudFront.
 	{regexp.MustCompile(`(?i)[?&](?:x-amz-signature|x-amz-credential|x-amz-security-token|x-goog-signature|x-goog-credential|signature|sig)=([^&#\s"'<>]+)`)},
 	{regexp.MustCompile(`(?i)` + sensitiveName + `\s*[=:]\s*("[^"]*"|'[^']*'|[^\s&,;"']+)`)},

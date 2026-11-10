@@ -29,6 +29,8 @@ func TestString(t *testing.T) {
 		{"Google API key", "maps key " + googleKey, "maps key [REDACTED]"},
 		{"GitHub classic token", "token " + ghp + " leaked", "token [REDACTED] leaked"},
 		{"GitHub app token", ghs, "[REDACTED]"},
+		{"GitHub token one short of 36", "ghp_" + strings.Repeat("x", 35), "[REDACTED]"},
+		{"GitHub token in a longer future format", "gho_" + strings.Repeat("Ab1", 20), "[REDACTED]"},
 		{"GitHub fine-grained token", "pat " + ghPAT, "pat [REDACTED]"},
 		{"JWT", "sa token " + jwt + " expired", "sa token [REDACTED] expired"},
 		{"private key", "loaded " + pemKey + " ok", "loaded [REDACTED] ok"},
