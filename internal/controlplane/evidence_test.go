@@ -216,8 +216,9 @@ func TestToolFailureComesBackAsAnAuditedError(t *testing.T) {
 	if len(e) != 1 || !strings.Contains(string(e[0].Data), `"outcome":"tool_error"`) {
 		t.Fatalf("audit = %+v", e)
 	}
-	if strings.Contains(string(e[0].Data), "no such tool") {
-		t.Errorf("Sensor error text in audit: %s", e[0].Data)
+	// The text is redacted before it is recorded, so it is recorded.
+	if !strings.Contains(string(e[0].Data), `"error":"no such tool"`) {
+		t.Errorf("Sensor error text not in audit: %s", e[0].Data)
 	}
 }
 

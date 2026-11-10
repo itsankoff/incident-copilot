@@ -15,12 +15,13 @@ import (
 	"github.com/itsankoff/incident-copilot/internal/audit"
 	"github.com/itsankoff/incident-copilot/internal/evidence"
 	"github.com/itsankoff/incident-copilot/internal/llm"
+	"github.com/itsankoff/incident-copilot/internal/redact"
 	"github.com/itsankoff/incident-copilot/internal/triage"
 )
 
 // PromptVersion names the RCA loop's prompts and tools. Change it whenever
 // they change, so investigations stay comparable.
-const PromptVersion = "rca-v1"
+const PromptVersion = "rca-v2"
 
 // Budget bounds one investigation. Running out still writes an RCA.
 type Budget struct {
@@ -71,7 +72,7 @@ var submitSpec = llm.ToolSpec{
 
 // systemPrompt lives in a file named for PromptVersion (CONTRIBUTING.md).
 //
-//go:embed prompts/rca-v1.txt
+//go:embed prompts/rca-v2.txt
 var systemPrompt string
 
 // incidentBrief is all the model learns about the Incident: identifiers only,
@@ -170,9 +171,9 @@ func (v *Investigator) loop(ctx context.Context, inc triage.Incident) (investiga
 			return inv, nil
 		}
 		inv.steps++
-		req := llm.Request{Model: v.model, Messages: msgs, Tools: tools}
+		req := llm.Request{Model: v.model, Messages: redacted(msgs), Tools: tools}
 		if err := v.audit.Append(v.now(), "llm.request", inc.ID, map[string]any{
-			"step": inv.steps, "model": v.model, "promptVersion": PromptVersion, "messages": auditMessages(msgs), "tools": toolNames(tools),
+			"step": inv.steps, "model": v.model, "promptVersion": PromptVersion, "messages": auditMessages(req.Messages), "tools": toolNames(tools),
 		}); err != nil {
 			return inv, err
 		}
@@ -235,18 +236,33 @@ func (v *Investigator) toolResult(ctx context.Context, inc triage.Incident, tc l
 	}
 	inv.ledger = append(inv.ledger, ledgerEntry{Ref: res.Ref, Tool: tc.Name, OK: err == nil})
 	if err != nil {
-		// The error text is unredacted Sensor output, so it stays out (#49).
-		b, _ := json.Marshal(map[string]any{"ref": res.Ref, "error": "unavailable"})
-		return string(b), nil
+		return frame(res.Ref, map[string]string{"error": err.Error()}), nil
 	}
-	b, _ := json.Marshal(res) // a Result always marshals
-	return string(b), nil
+	return frame(res.Ref, map[string]json.RawMessage{"data": res.Data}), nil
+}
+
+// frame is a tool result as the model reads it: the trusted Evidence ref,
+// then what the tool read, labelled as untrusted data (ADR 0003 D4). The
+// framed part is JSON from json.Marshal, which writes '<' as \u003c, so
+// nothing inside can close the frame.
+func frame(ref evidence.Ref, read any) string {
+	r, _ := json.Marshal(map[string]evidence.Ref{"ref": ref}) // a Ref always marshals
+	b, _ := json.Marshal(read)                                // so does redacted JSON
+	return fmt.Sprintf("%s\n<untrusted-data>\n%s\n</untrusted-data>", r, b)
+}
+
+// redacted is msgs with the redactor run over every message's text: the
+// Control plane's pass before every LLM call (ADR 0003 D8).
+func redacted(msgs []llm.Message) []llm.Message {
+	out := slices.Clone(msgs)
+	for i := range out {
+		out[i].Content = redact.String(out[i].Content)
+	}
+	return out
 }
 
 // auditMessages is msgs with each tool result replaced by its digest, since
-// evidence.query already holds its ref. Tool output is unredacted (#49); the
-// model's own messages are kept as written, so until #49 they can repeat
-// what it read.
+// evidence.query already holds what the tool read.
 func auditMessages(msgs []llm.Message) []llm.Message {
 	out := slices.Clone(msgs)
 	for i, m := range out {

@@ -3,8 +3,6 @@ package controlplane
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +11,7 @@ import (
 
 	"github.com/itsankoff/incident-copilot/internal/audit"
 	"github.com/itsankoff/incident-copilot/internal/evidence"
+	"github.com/itsankoff/incident-copilot/internal/redact"
 )
 
 // Link is how the Control plane reaches Sensors. *link.Hub is the HTTP
@@ -43,10 +42,10 @@ var errAudit = errors.New("audit")
 // defaultWindow is what a query reads when it names no window.
 const defaultWindow = time.Hour
 
-// Query runs q for incident (0 outside any Incident). The audit entry holds
-// the ref and a digest of the answer, never the answer: nothing redacts it yet
-// (#49), and secrets never reach the audit log. A failed query still returns
-// its ref, so the failure can be reported against it.
+// Query runs q for incident (0 outside any Incident). It redacts the answer
+// and its error text on arrival, whatever the Sensor did (ADR 0003 D8), and
+// audits them with the ref. A failed query still returns its ref, so the
+// failure can be reported against it.
 func (e *Evidence) Query(ctx context.Context, incident int64, q evidence.Query) (evidence.Result, error) {
 	now := e.now()
 	if q.Window.End.IsZero() {
@@ -60,17 +59,17 @@ func (e *Evidence) Query(ctx context.Context, incident int64, q evidence.Query) 
 	ctx, cancel := context.WithTimeout(ctx, evidence.CallDeadline)
 	defer cancel()
 	answer, err := e.link.Call(ctx, ref.Location, evidence.Call{ID: ref.CallID, Query: q})
+	answer.Data, answer.Error = redact.JSON(answer.Data), redact.String(answer.Error)
 
 	entry := map[string]any{"ref": ref, "tool": q.Tool}
 	switch {
 	case err != nil:
 		entry["outcome"], entry["error"] = "error", err.Error()
-	case answer.Error != "": // the Sensor's text is unredacted too, so it stays out
-		entry["outcome"] = "tool_error"
+	case answer.Error != "":
+		entry["outcome"], entry["error"] = "tool_error", answer.Error
 		err = fmt.Errorf("%s: %s", q.Tool, answer.Error)
 	default:
-		sum := sha256.Sum256(answer.Data)
-		entry["outcome"], entry["bytes"], entry["sha256"] = "ok", len(answer.Data), hex.EncodeToString(sum[:])
+		entry["outcome"], entry["data"] = "ok", answer.Data
 	}
 	if aerr := e.audit.Append(e.now(), "evidence.query", incident, entry); aerr != nil {
 		return evidence.Result{Ref: ref}, fmt.Errorf("%w: %w", errAudit, aerr)

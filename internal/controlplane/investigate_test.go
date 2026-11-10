@@ -78,7 +78,7 @@ func submit(rca RCA) llm.Response {
 }
 
 // refsIn returns the call ids of the Evidence refs in req's tool results, by
-// the tool that produced them.
+// the tool that produced them. A framed result's ref is its first line.
 func refsIn(t *testing.T, req llm.Request) map[string]string {
 	t.Helper()
 	calls := map[string]string{}
@@ -97,7 +97,8 @@ func refsIn(t *testing.T, req llm.Request) map[string]string {
 		var res struct {
 			Ref evidence.Ref `json:"ref"`
 		}
-		if err := json.Unmarshal([]byte(m.Content), &res); err != nil {
+		first, _, _ := strings.Cut(m.Content, "\n")
+		if err := json.Unmarshal([]byte(first), &res); err != nil {
 			t.Fatalf("tool result is not JSON: %v: %s", err, m.Content)
 		}
 		if res.Ref.CallID != "" {
@@ -330,8 +331,9 @@ func TestAnInvestigationIsAuditedWholeAndReproducibly(t *testing.T) {
 
 	log := h.auditLog()
 	for _, e := range log {
-		if strings.Contains(string(e.Data), "CrashLoopBackOff") {
-			t.Errorf("%s holds raw tool output: %s", e.Type, e.Data)
+		// What a tool read is recorded once, under its Evidence query.
+		if strings.Contains(string(e.Data), "CrashLoopBackOff") != (e.Type == "evidence.query") {
+			t.Errorf("%s: tool output recorded or missing: %s", e.Type, e.Data)
 		}
 	}
 	reqs, resps := ofType(log, "llm.request"), ofType(log, "llm.response")
