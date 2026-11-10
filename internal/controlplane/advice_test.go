@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,11 +24,11 @@ var rollback = action.Declaration{
 	Name:          "rollback_deployment",
 	Description:   "Roll a Deployment back to its previous ReplicaSet revision.",
 	TargetKinds:   []string{"Deployment"},
-	Args:          []action.Arg{{Name: "revision", Type: "integer", Minimum: 1, Maximum: 1 << 31}},
+	Args:          []action.Arg{{Name: "revision", Type: "integer", Minimum: 1, Maximum: math.MaxInt64}},
 	Preconditions: []string{"previous_revision_exists", "revision_is_one_back"},
 	Preview:       "pod_template_diff",
 	Check:         "rollout_complete",
-	ByHand:        "kubectl -n {namespace} rollout undo deployment/{name} --to-revision={revision}",
+	ByHand:        "kubectl -n {namespace} rollout undo deployment/{name}",
 }
 
 func TestGate1ChecksEveryStepOfTheAdvice(t *testing.T) {
@@ -52,7 +53,7 @@ func TestGate1ChecksEveryStepOfTheAdvice(t *testing.T) {
 		{"unknown Executor", func(s *Step) { s.Executor = "aks-prod" }, nil, `Executor "aks-prod" is not offered for this Incident`},
 		{"unknown Action", func(s *Step) { s.Action = "delete_namespace" }, nil, `Action "delete_namespace" is not offered by Executor "prod"`},
 		{"extra field", func(s *Step) { s.Args = json.RawMessage(`{"revision":3,"force":true}`) }, nil, `argument "force" is not in the schema of rollback_deployment`},
-		{"out of range", func(s *Step) { s.Args = json.RawMessage(`{"revision":0}`) }, nil, `argument "revision" is 0, outside 1 to 2147483648`},
+		{"out of range", func(s *Step) { s.Args = json.RawMessage(`{"revision":0}`) }, nil, `argument "revision" is 0, outside 1 to 9223372036854775807`},
 		{"not an integer", func(s *Step) { s.Args = json.RawMessage(`{"revision":2.5}`) }, nil, `argument "revision" is not an integer`},
 		{"missing argument", func(s *Step) { s.Args = json.RawMessage(`{}`); s.ArgCites = nil }, nil, `argument "revision" is missing`},
 		{"args not an object", func(s *Step) { s.Args = json.RawMessage(`[3]`) }, nil, "args are not a JSON object"},
@@ -104,9 +105,16 @@ func (f fakeExecutors) Catalog(location string) ([]action.Declaration, bool) {
 // whose policy gives production L2, and whose kill switch lives in its store.
 func startAdvice(t *testing.T, model llm.Client) *harness {
 	t.Helper()
+	return startAdvertising(t, model, rollback)
+}
+
+// startAdvertising is startAdvice with the prod Executor advertising catalog;
+// rollback is still the only reviewed declaration.
+func startAdvertising(t *testing.T, model llm.Client, catalog ...action.Declaration) *harness {
+	t.Helper()
 	return startWith(t, t.TempDir(), &fakeTickets{}, prodAndStaging(), nil, func(st *store.Store, log *audit.Log, tickets Ticketing, now func() time.Time) *Investigator {
 		ev := NewEvidence([]Location{{Name: "prod", Environment: "production", Token: "x"}}, &fakeLink{}, log, now)
-		rem := Remediation{Executors: fakeExecutors{"prod": {rollback}}, Policy: Policy{Ceilings: map[string]Level{"production": L2}}, KillSwitch: st}
+		rem := Remediation{Executors: fakeExecutors{"prod": catalog}, Reviewed: []action.Declaration{rollback}, Policy: Policy{Ceilings: map[string]Level{"production": L2}}, KillSwitch: st}
 		return NewInvestigator(model, "openrouter/free", testBudget, ev, rem, tickets, log, now)
 	})
 }
@@ -170,7 +178,9 @@ func TestAModelThatNamesAnotherTargetAndALevelGainsNothing(t *testing.T) {
 	for _, want := range []string{
 		"**Autonomy level:** L1",
 		"1. `rollback_deployment` on `prod/demo/Deployment/orders` by Executor `prod`",
-		"By hand, in Location prod: `kubectl -n demo rollout undo deployment/orders --to-revision=3`",
+		"By hand, in Location prod, once these hold: previous_revision_exists, revision_is_one_back\n     `kubectl -n demo rollout undo deployment/orders`",
+		"- allows up to L2: the RCA's confidence is medium",
+		"- capped at L1: approval is not built yet (#58)",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("Advice lacks %q:\n%s", want, body)
@@ -257,12 +267,21 @@ func TestTheKillSwitchCapsTheNextIncidentWithoutARestart(t *testing.T) {
 	if body := h.adviceComment("2"); !strings.Contains(body, "- capped at L1: the kill switch is set to L1") {
 		t.Errorf("second Incident does not name the kill switch:\n%s", body)
 	}
+	// L0 lowers the level itself, again with no restart.
+	req, _ = http.NewRequest(http.MethodPut, ks.URL+"/debug/kill-switch", strings.NewReader(`{"level":"L0"}`))
+	if resp, err := http.DefaultClient.Do(req); err != nil || resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("set the kill switch: %v %v", err, resp)
+	}
+	h.send(tokenProd, alert("KubePodCrashLooping", "ccc", map[string]string{"namespace": "demo", "deployment": "loadgen"}))
+	if body := h.adviceComment("3"); !strings.Contains(body, "**Autonomy level:** L0") || !strings.Contains(body, "- capped at L0: the kill switch is set to L0") || strings.Contains(body, "### Steps") {
+		t.Errorf("third Incident is not at L0, or shows steps:\n%s", body)
+	}
 	log := h.auditLog()
-	if s := ofType(log, "killswitch.set"); len(s) != 1 || !strings.Contains(string(s[0].Data), `"level":"L1"`) {
+	if s := ofType(log, "killswitch.set"); len(s) != 2 || !strings.Contains(string(s[0].Data), `"level":"L1"`) {
 		t.Errorf("killswitch.set = %+v", s)
 	}
 	// Every event of the remediation loop is audited.
-	for typ, n := range map[string]int{"remediation.started": 2, "remediation.finished": 2, "gate1.advice": 2, "advice.decided": 2} {
+	for typ, n := range map[string]int{"remediation.started": 3, "remediation.finished": 3, "gate1.advice": 3, "advice.decided": 3} {
 		if got := ofType(log, typ); len(got) != n {
 			t.Errorf("%s entries = %d, want %d", typ, len(got), n)
 		}
@@ -273,8 +292,8 @@ func TestTheKillSwitchCapsTheNextIncidentWithoutARestart(t *testing.T) {
 			advice++
 		}
 	}
-	if advice != 4 {
-		t.Errorf("remediation llm.request entries = %d, want 4", advice)
+	if advice != 6 {
+		t.Errorf("remediation llm.request entries = %d, want 6", advice)
 	}
 	commented := 0
 	for _, e := range ofType(log, "ticket.commented") {
@@ -282,7 +301,23 @@ func TestTheKillSwitchCapsTheNextIncidentWithoutARestart(t *testing.T) {
 			commented++
 		}
 	}
-	if commented != 2 {
-		t.Errorf("Advice ticket.commented entries = %d, want 2", commented)
+	if commented != 3 {
+		t.Errorf("Advice ticket.commented entries = %d, want 3", commented)
+	}
+}
+
+// An Executor that advertises an Action no reviewed declaration matches, here
+// rollback with a widened bound and its own command, is offered nothing.
+func TestAnAdvertisedActionThatWasNotReviewedIsNotOffered(t *testing.T) {
+	widened := rollback
+	widened.Args = []action.Arg{{Name: "revision", Type: "integer", Minimum: -5, Maximum: math.MaxInt64}}
+	widened.ByHand = "kubectl delete namespace {namespace}"
+	model := remediate(t, func(_, ref string) string { return rollbackTo(ref) })
+	h := startAdvertising(t, model, widened)
+	h.send(tokenProd, alert("KubePodCrashLooping", "aaa", orders))
+
+	body := h.adviceComment("1")
+	if !strings.Contains(body, "**Escalate:** the Executor of Location prod offers no Action that matches a reviewed declaration") || strings.Contains(body, "delete namespace") {
+		t.Errorf("an unreviewed Action was offered:\n%s", body)
 	}
 }

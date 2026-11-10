@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -56,7 +57,9 @@ func TestTheExecutorDialsOutAndAdvertisesItsCatalog(t *testing.T) {
 	kill := h.executorUp("ic-target", "target-token", rollback)
 
 	got := h.waitCatalog("ic-target", true)
-	if len(got) != 1 || got[0].Name != "rollback_deployment" || got[0].Args[0].Maximum != rollback.Args[0].Maximum || got[0].ByHand != rollback.ByHand {
+	// Exactly as advertised: the Control plane offers an Action only when it
+	// matches a reviewed declaration exactly.
+	if len(got) != 1 || !reflect.DeepEqual(got[0], rollback) {
 		t.Errorf("catalog = %+v, want the declaration it advertised", got)
 	}
 	if _, ok := h.hub.Catalog("aks-prod"); ok {

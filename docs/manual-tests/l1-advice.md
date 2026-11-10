@@ -76,13 +76,13 @@ audit | jq -c 'select(.incident == 1) | [.seq, .type, (.data.reason // .data.kin
 advice 1
 ```
 
-Expect an `## Advice` comment that opens with `**Autonomy level:** L1 (suggest: carry out the steps below by hand; nothing runs on its own)` and lists every cap:
+Expect an `## Advice` comment that opens with `**Autonomy level:** L1 (suggest: carry out the steps below by hand; nothing runs on its own)` and lists every cap. The caps that set the level say `capped at`; the others say `allows up to`:
 
-- `capped at L2: Environment demo has a ceiling of L2`
-- the RCA's confidence (`capped at L2: the RCA's confidence is medium`, or L1 for `low`)
+- `allows up to L2: Environment demo has a ceiling of L2`
+- the RCA's confidence (`allows up to L2: the RCA's confidence is medium`, or `capped at L1` for `low`)
 - `capped at L1: approval is not built yet (#58)`
 
-The model decides what follows. For the crash loop it usually proposes `rollback_deployment` on `ic-target/demo/Deployment/orders` with the previous `revision`, citing claims of the RCA, with the revision citing the `workload_state` read it came from. The step then ends with `By hand, in Location ic-target: kubectl -n demo rollout undo deployment/orders --to-revision=<n>`. If the model escalates instead, the comment says `**Escalate:**` with its reason. If its Advice fails Gate 1, the comment says `**Not offered for approval:**`, marks each failure with `⚠ fails Gate 1`, and shows no step to carry out by hand.
+The model decides what follows. For the crash loop it usually proposes `rollback_deployment` on `ic-target/demo/Deployment/orders` with the previous `revision`, citing claims of the RCA, with the revision citing the `workload_state` read it came from. The step then ends with `By hand, in Location ic-target, once these hold: previous_revision_exists, revision_is_one_back` and the command `kubectl -n demo rollout undo deployment/orders`, which goes exactly one revision back. If the model escalates instead, the comment says `**Escalate:**` with its reason. If its Advice fails Gate 1, the comment says `**Not offered for approval:**`, marks each failure with `⚠ fails Gate 1`, and shows no step to carry out by hand.
 
 ```sh
 make clear

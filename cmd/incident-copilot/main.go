@@ -99,7 +99,7 @@ func runControlPlane(ctx context.Context, logger *slog.Logger) error {
 		// Free models can take a while to answer; the RCA loop's time budget
 		// bounds the whole investigation.
 		client := openrouter.New(openrouter.APIURL, c.Key, &http.Client{Timeout: 2 * time.Minute})
-		rem := controlplane.Remediation{Executors: hub, Policy: cfg.Policy, KillSwitch: st}
+		rem := controlplane.Remediation{Executors: hub, Reviewed: kubernetes.Actions(), Policy: cfg.Policy, KillSwitch: st}
 		inv = controlplane.NewInvestigator(client, c.Model, c.Budget, ev, rem, tickets, log, time.Now)
 		model = c.Model
 	} else {

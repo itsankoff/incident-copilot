@@ -109,7 +109,7 @@ func TestRollbackDeploymentByHand(t *testing.T) {
 	if r := d.CheckArgs(json.RawMessage(`{"revision":3}`)); len(r) != 0 || !d.Accepts("Deployment") || d.Accepts("StatefulSet") {
 		t.Fatalf("declaration refuses a valid step: %v", r)
 	}
-	if got, want := d.ByHandFor(orders, json.RawMessage(`{"revision":3}`)), "kubectl -n demo rollout undo deployment/orders --to-revision=3"; got != want {
+	if got, want := d.ByHandFor(orders, json.RawMessage(`{"revision":3}`)), "kubectl -n demo rollout undo deployment/orders"; got != want {
 		t.Errorf("by hand = %q, want %q", got, want)
 	}
 }

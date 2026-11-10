@@ -185,26 +185,26 @@ func (h *Hub) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /link/{location}/next", h.next)
 	mux.HandleFunc("POST /link/{location}/replies/{id}", h.reply)
-	mux.HandleFunc("POST /link/{location}/executor/next", h.executorNext)
+	mux.HandleFunc("POST /link/{location}/executor/next", h.pollExecutor)
 	return mux
 }
 
-// catalog is the body of an Executor's poll.
-type catalog struct {
+// executorPoll is the body of an Executor's poll.
+type executorPoll struct {
 	Actions []action.Declaration `json:"actions"`
 }
 
-func (h *Hub) executorNext(w http.ResponseWriter, r *http.Request) {
+func (h *Hub) pollExecutor(w http.ResponseWriter, r *http.Request) {
 	l, ok := h.authenticate(w, r)
 	if !ok {
 		return
 	}
-	var c catalog
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxReply)).Decode(&c); err != nil {
+	var p executorPoll
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxReply)).Decode(&p); err != nil {
 		http.Error(w, "unparseable body", http.StatusBadRequest)
 		return
 	}
-	if err := h.executorPolled(r.PathValue("location"), l, c.Actions); err != nil {
+	if err := h.executorPolled(r.PathValue("location"), l, p.Actions); err != nil {
 		http.Error(w, "audit", http.StatusInternalServerError)
 		return
 	}

@@ -63,7 +63,7 @@ func (c *Client) Next(ctx context.Context) (call evidence.Call, ok bool, err err
 // Poll is one Executor poll: it advertises actions and returns once the
 // Control plane releases the poll.
 func (c *Client) Poll(ctx context.Context, actions []action.Declaration) error {
-	body, err := json.Marshal(catalog{actions})
+	body, err := json.Marshal(executorPoll{actions})
 	if err != nil {
 		return err
 	}

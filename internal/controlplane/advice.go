@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -37,7 +38,12 @@ type KillSwitchStore interface {
 
 // Remediation is what the remediation loop and Decide read besides the LLM.
 type Remediation struct {
-	Executors  Executors
+	Executors Executors
+	// Reviewed are the Actions this build's code declares. An Executor's
+	// advertised Action is offered only when it matches one exactly, so a
+	// widened bound or an unknown Action on the link is never offered (ADR
+	// 0003 D2).
+	Reviewed   []action.Declaration
 	Policy     Policy
 	KillSwitch KillSwitchStore
 }
@@ -99,16 +105,13 @@ func gate1Advice(a Advice, inc triage.Incident, offered map[string][]action.Decl
 			fail("target %s is not the Incident's Target %s", s.Target, inc.Target)
 		}
 
-		catalog, ok := offered[s.Executor]
-		if !ok {
+		d, found := declaration(offered, s)
+		switch _, linked := offered[s.Executor]; {
+		case !linked:
 			fail("Executor %q is not offered for this Incident", s.Executor)
-		}
-		j := slices.IndexFunc(catalog, func(d action.Declaration) bool { return d.Name == s.Action })
-		if ok && j < 0 {
+		case !found:
 			fail("Action %q is not offered by Executor %q", s.Action, s.Executor)
-		}
-		if j >= 0 {
-			d := catalog[j]
+		default:
 			if inc.Target != nil && !d.Accepts(inc.Target.Kind) {
 				fail("%s does not accept Target kind %s", d.Name, inc.Target.Kind)
 			}
@@ -121,13 +124,10 @@ func gate1Advice(a Advice, inc triage.Incident, offered map[string][]action.Decl
 			fail("cites nothing")
 		}
 		for _, id := range s.Cites {
-			succeeded, isQuery := queries[id]
-			switch {
-			case claims[id]:
-			case !isQuery:
-				fail("cites %s, which is neither a claim of the RCA nor an Evidence query of this Incident", id)
-			case !succeeded:
-				fail("cites %s, whose Evidence query failed", id)
+			if !claims[id] {
+				if p := queryProblem(queries, id, "neither a claim of the RCA nor an Evidence query of this Incident"); p != "" {
+					fail("cites %s, %s", id, p)
+				}
 			}
 		}
 
@@ -141,12 +141,8 @@ func gate1Advice(a Advice, inc triage.Incident, offered map[string][]action.Decl
 				fail("argument %q cites no evidence", name)
 			}
 			for _, id := range cites {
-				succeeded, isQuery := queries[id]
-				switch {
-				case !isQuery:
-					fail("argument %q cites %s, which is not an Evidence query of this Incident", name, id)
-				case !succeeded:
-					fail("argument %q cites %s, whose Evidence query failed", name, id)
+				if p := queryProblem(queries, id, "not an Evidence query of this Incident"); p != "" {
+					fail("argument %q cites %s, %s", name, id, p)
 				}
 			}
 		}
@@ -157,6 +153,29 @@ func gate1Advice(a Advice, inc triage.Incident, offered map[string][]action.Decl
 		}
 	}
 	return out
+}
+
+// declaration is the offered declaration of s's Action.
+func declaration(offered map[string][]action.Declaration, s Step) (action.Declaration, bool) {
+	catalog := offered[s.Executor]
+	i := slices.IndexFunc(catalog, func(d action.Declaration) bool { return d.Name == s.Action })
+	if i < 0 {
+		return action.Declaration{}, false
+	}
+	return catalog[i], true
+}
+
+// queryProblem says why id is not a successful Evidence query of this
+// Incident (unknown completes "which is …"), or "" when it is one.
+func queryProblem(queries map[string]bool, id, unknown string) string {
+	succeeded, isQuery := queries[id]
+	switch {
+	case !isQuery:
+		return "which is " + unknown
+	case !succeeded:
+		return "whose Evidence query failed"
+	}
+	return ""
 }
 
 func sortedKeys[V any](m map[string]V) []string {
@@ -209,31 +228,31 @@ func adviceBrief(inc triage.Incident, rca *RCA, conf string, ledger []ledgerEntr
 	return "Draft Advice for this Incident:\n" + string(b)
 }
 
-// offered is the catalog of the Executor in the Incident's Location, keyed by
-// its name, the Location's. Executors elsewhere cannot act on the Target.
-func (v *Investigator) offered(inc triage.Incident) map[string][]action.Declaration {
-	if inc.Target == nil || v.rem.Executors == nil {
-		return nil
-	}
-	catalog, ok := v.rem.Executors.Catalog(inc.Target.Location)
-	if !ok || len(catalog) == 0 {
-		return nil
-	}
-	return map[string][]action.Declaration{inc.Target.Location: catalog}
-}
-
-// environment is the configured Environment of the Incident's Location, or ""
-// when it has none.
-func (v *Investigator) environment(inc triage.Incident) string {
+// offered is the reviewed part of the catalog of the Executor in the
+// Incident's Location, keyed by its name, the Location's: Executors elsewhere
+// cannot act on the Target. When nothing is offered, why says so.
+func (v *Investigator) offered(inc triage.Incident) (offered map[string][]action.Declaration, why string) {
 	if inc.Target == nil {
-		return ""
+		return nil, "the Incident has no Target, so no Action can be aimed at it"
 	}
-	for _, l := range v.evidence.locations {
-		if l.Name == inc.Target.Location {
-			return l.Environment
+	var advertised []action.Declaration
+	linked := false
+	if v.rem.Executors != nil {
+		advertised, linked = v.rem.Executors.Catalog(inc.Target.Location)
+	}
+	if !linked {
+		return nil, fmt.Sprintf("the Executor of Location %s is not linked, so no Actions are offered", inc.Target.Location)
+	}
+	var catalog []action.Declaration
+	for _, d := range advertised {
+		if slices.ContainsFunc(v.rem.Reviewed, func(r action.Declaration) bool { return reflect.DeepEqual(r, d) }) {
+			catalog = append(catalog, d)
 		}
 	}
-	return ""
+	if len(catalog) == 0 {
+		return nil, fmt.Sprintf("the Executor of Location %s offers no Action that matches a reviewed declaration", inc.Target.Location)
+	}
+	return map[string][]action.Declaration{inc.Target.Location: catalog}, ""
 }
 
 // killSwitch reads the kill switch afresh. Any failure to read it caps at L1.
@@ -260,17 +279,11 @@ func (v *Investigator) killSwitch(ctx context.Context) KillSwitch {
 // L1 the ticket shows the steps to carry out by hand. It returns only audit
 // and ticketing failures.
 func (v *Investigator) advise(ctx context.Context, inc triage.Incident, rca *RCA, rcaLedger []ledgerEntry, conf string) error {
-	offered := v.offered(inc)
+	offered, skip := v.offered(inc)
 	var adv Advice
 	var run *loopRun
-	skip := ""
-	switch {
-	case inc.Target == nil:
-		skip = "the Incident has no Target, so no Action can be aimed at it"
-	case rca == nil:
+	if skip == "" && rca == nil {
 		skip = "there is no RCA to draft Advice from"
-	case len(offered) == 0:
-		skip = fmt.Sprintf("the Executor of Location %s is not linked, so no Actions are offered", inc.Target.Location)
 	}
 	if skip != "" {
 		adv.Reason = skip
@@ -293,7 +306,7 @@ func (v *Investigator) advise(ctx context.Context, inc triage.Incident, rca *RCA
 		var submitted Advice
 		r, err := v.loop(ctx, inc, loopSpec{
 			promptVersion: AdvicePromptVersion, system: advicePrompt, brief: adviceBrief(inc, rca, conf, rcaLedger, offered),
-			submit: submitAdviceSpec, what: "Advice", nudge: "Call submit_advice with your Advice.",
+			submit: submitAdviceSpec, submission: "Advice", nudge: "Call submit_advice with your Advice.",
 			accept: func(arguments string) error {
 				var a Advice
 				if err := json.Unmarshal([]byte(arguments), &a); err != nil {
@@ -346,7 +359,14 @@ func (v *Investigator) advise(ctx context.Context, inc triage.Incident, rca *RCA
 	if !guards[0].Passed {
 		guards[0].Reason = "the Advice fails Gate 1"
 	}
-	in := DecideInput{Incident: inc, Environment: v.environment(inc), Policy: v.rem.Policy, KillSwitch: v.killSwitch(ctx), Confidence: conf, Guards: guards}
+	env := ""
+	if inc.Target != nil {
+		env = v.evidence.environment(inc.Target.Location)
+	}
+	// Preconditions are checked on fresh state by the Executor before each
+	// step it runs (#57). At L1 nothing runs, and the ticket lists them for
+	// whoever carries the steps out.
+	in := DecideInput{Incident: inc, Environment: env, Policy: v.rem.Policy, KillSwitch: v.killSwitch(ctx), Confidence: conf, Guards: guards}
 	d := Decide(in)
 	if err := v.audit.Append(v.now(), "advice.decided", inc.ID, map[string]any{
 		"level": d.Level, "caps": d.Caps,
@@ -375,7 +395,11 @@ func (v *Investigator) renderAdvice(adv Advice, failures []stepFailure, d Decisi
 	b.WriteString("## Advice\n\n")
 	fmt.Fprintf(&b, "**Autonomy level:** %s (%s)\n\n", d.Level, levelMeaning[d.Level])
 	for _, c := range d.Caps {
-		fmt.Fprintf(&b, "- capped at %s: %s\n", c.Level, c.Reason)
+		verb := "capped at"
+		if c.Level > d.Level {
+			verb = "allows up to"
+		}
+		fmt.Fprintf(&b, "- %s %s: %s\n", verb, c.Level, c.Reason)
 	}
 	b.WriteString("\n")
 	if len(failures) > 0 {
@@ -432,8 +456,9 @@ func (v *Investigator) renderAdvice(adv Advice, failures []stepFailure, d Decisi
 				fmt.Fprintf(&b, "   - ⚠ fails Gate 1: %s\n", r)
 			}
 			if d.Level == L1 && len(failures) == 0 {
-				j := slices.IndexFunc(offered[s.Executor], func(d action.Declaration) bool { return d.Name == s.Action })
-				fmt.Fprintf(&b, "   - By hand, in Location %s: `%s`\n", s.Target.Location, offered[s.Executor][j].ByHandFor(*s.Target, s.Args))
+				dec, _ := declaration(offered, s) // it passed Gate 1
+				fmt.Fprintf(&b, "   - By hand, in Location %s, once these hold: %s\n", s.Target.Location, strings.Join(dec.Preconditions, ", "))
+				fmt.Fprintf(&b, "     `%s`\n", dec.ByHandFor(*s.Target, s.Args))
 			}
 		}
 	}

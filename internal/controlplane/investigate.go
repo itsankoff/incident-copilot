@@ -112,7 +112,7 @@ type loopSpec struct {
 	promptVersion string
 	system, brief string
 	submit        llm.ToolSpec
-	what          string // what a submission is, such as RCA
+	submission    string // what the model submits, such as RCA
 	nudge         string // sent when the model answers without a tool call
 	// accept reads a submission's arguments. An error goes back to the model,
 	// which may submit again.
@@ -154,7 +154,7 @@ func (v *Investigator) Run(ctx context.Context, inc triage.Incident) error {
 	var inv investigation
 	var err error
 	inv.loopRun, err = v.loop(ctx, inc, loopSpec{
-		promptVersion: PromptVersion, system: systemPrompt, brief: incidentBrief(inc), submit: submitSpec, what: "RCA",
+		promptVersion: PromptVersion, system: systemPrompt, brief: incidentBrief(inc), submit: submitSpec, submission: "RCA",
 		nudge: "Call submit_rca with your root-cause analysis.",
 		accept: func(arguments string) error {
 			var r RCA
@@ -249,7 +249,7 @@ func (v *Investigator) loop(ctx context.Context, inc triage.Incident, spec loopS
 			msgs = append(msgs, llm.Message{Role: llm.Tool, ToolCallID: tc.ID, Content: content})
 		}
 	}
-	inv.stopped = "the model submitted its " + spec.what
+	inv.stopped = "the model submitted its " + spec.submission
 	return inv, nil
 }
 
