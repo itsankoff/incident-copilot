@@ -218,3 +218,20 @@ func TestSensorResendsFiringSignalsEveryFiveMinutes(t *testing.T) {
 		}
 	}
 }
+
+func TestNamespaceAllowlistHasNoEmptyEntries(t *testing.T) {
+	env := map[string]string{"IC_SENSOR_LOCATION": "ic-target", "IC_CONTROL_PLANE_URL": "http://cp", "IC_SENSOR_TOKEN": "t"}
+	for value, want := range map[string]string{"demo": "[demo]", " demo , shop ": "[demo shop]", "demo,": "", "demo,,shop": "", " ": ""} {
+		env["IC_SENSOR_NAMESPACES"] = value
+		cfg, err := LoadConfig(func(k string) string { return env[k] })
+		if want == "" {
+			if err == nil {
+				t.Errorf("%q: got %q, want an error", value, cfg.Namespaces)
+			}
+			continue
+		}
+		if err != nil || fmt.Sprint(cfg.Namespaces) != want {
+			t.Errorf("%q: got %q (err %v), want %s", value, cfg.Namespaces, err, want)
+		}
+	}
+}

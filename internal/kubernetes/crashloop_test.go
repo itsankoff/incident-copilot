@@ -7,11 +7,14 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 	metadatafake "k8s.io/client-go/metadata/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/itsankoff/incident-copilot/internal/signal"
 )
@@ -91,6 +94,9 @@ func newAPI(t *testing.T, owners ...*metav1.PartialObjectMetadata) *api {
 		}},
 		{GroupVersion: "argoproj.io/v1alpha1", APIResources: []metav1.APIResource{
 			{Name: "rollouts", Kind: "Rollout", Namespaced: true},
+		}},
+		{GroupVersion: "v1", APIResources: []metav1.APIResource{
+			{Name: "nodes", Kind: "Node", Namespaced: false},
 		}},
 	}
 	return &api{t, c, metadatafake.NewSimpleMetadataClient(scheme, objs...)}
@@ -242,6 +248,7 @@ func TestCrashLoopTargetIsTheTopControllerOwner(t *testing.T) {
 			ownerObj("argoproj.io/v1alpha1", "Rollout", "checkout"), ownerObj("apps/v1", "ReplicaSet", "checkout-5c4b", toRollout),
 		}, []metav1.OwnerReference{controller("apps/v1", "ReplicaSet", "checkout-5c4b")}, "ic-target/demo/Rollout/checkout"},
 		{"a Pod with no owner", nil, nil, "ic-target/demo/Pod/p"},
+		{"a static Pod, whose Node is no workload", nil, []metav1.OwnerReference{controller("v1", "Node", "worker")}, "ic-target/demo/Pod/p"},
 		{"a StatefulSet", []*metav1.PartialObjectMetadata{ownerObj("apps/v1", "StatefulSet", "db")},
 			[]metav1.OwnerReference{controller("apps/v1", "StatefulSet", "db")}, "ic-target/demo/StatefulSet/db"},
 		{"a CronJob through its Job", []*metav1.PartialObjectMetadata{
@@ -263,6 +270,20 @@ func TestCrashLoopTargetIsTheTopControllerOwner(t *testing.T) {
 				t.Errorf("got %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+// The Sensor's RBAC reads no CRDs, yet the CRD a ReplicaSet names is the Target.
+func TestCrashLoopTargetIsACRDTheSensorMayNotRead(t *testing.T) {
+	a := newAPI(t, ownerObj("argoproj.io/v1alpha1", "Rollout", "checkout"),
+		ownerObj("apps/v1", "ReplicaSet", "checkout-5c4b", controller("argoproj.io/v1alpha1", "Rollout", "checkout")))
+	a.meta.PrependReactor("get", "rollouts", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Group: "argoproj.io", Resource: "rollouts"}, "checkout", nil)
+	})
+	a.set(crashing("p", t0, controller("apps/v1", "ReplicaSet", "checkout-5c4b")))
+	want := []string{"firing ic-target/demo/Rollout/checkout since 1m0s"}
+	if got := check(t, a.detector(), time.Minute); !same(got, want) {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
 

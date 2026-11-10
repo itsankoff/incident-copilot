@@ -36,7 +36,13 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("%s: required", key)
 		}
 	}
-	cfg.Namespaces = strings.Split(namespaces, ",")
+	for ns := range strings.SplitSeq(namespaces, ",") {
+		// An empty name would list every namespace.
+		if ns = strings.TrimSpace(ns); ns == "" {
+			return Config{}, fmt.Errorf("IC_SENSOR_NAMESPACES: empty namespace in %q", namespaces)
+		}
+		cfg.Namespaces = append(cfg.Namespaces, ns)
+	}
 	return cfg, nil
 }
 
@@ -57,16 +63,20 @@ type Detector interface {
 	Check(ctx context.Context, now time.Time) ([]signal.Signal, error)
 }
 
-// Resend is how often a firing Detector Signal is sent again, so a dead
-// Sensor's Signals expire instead of hanging open (ADR 0002 D5).
-const Resend = 5 * time.Minute
+const (
+	// resend is how often a firing Detector Signal is sent again, so a dead
+	// Sensor's Signals expire instead of hanging open (ADR 0002 D5).
+	resend = 5 * time.Minute
+	// detectEvery is how often the Detectors run.
+	detectEvery = 10 * time.Second
+	// checkDeadline bounds one Detector's Check.
+	checkDeadline = 30 * time.Second
+)
 
 // Sensor answers Calls from its Link and sends its Detectors' Signals over it.
 type Sensor struct {
 	// Retry is the wait after a failed or refused poll.
 	Retry time.Duration
-	// DetectEvery is how often the Detectors run.
-	DetectEvery time.Duration
 
 	link      Link
 	tools     map[string]evidence.Tool
@@ -82,7 +92,7 @@ type outgoing struct {
 }
 
 func New(l Link, tools []evidence.Tool, detectors []Detector, logger *slog.Logger) *Sensor {
-	s := &Sensor{Retry: 5 * time.Second, DetectEvery: 10 * time.Second, link: l, tools: map[string]evidence.Tool{},
+	s := &Sensor{Retry: 5 * time.Second, link: l, tools: map[string]evidence.Tool{},
 		detectors: detectors, logger: logger, signals: map[string]outgoing{}}
 	for _, t := range tools {
 		s.tools[t.Name()] = t
@@ -91,11 +101,13 @@ func New(l Link, tools []evidence.Tool, detectors []Detector, logger *slog.Logge
 }
 
 // Detect runs every Detector at now and sends what is due: each Signal that
-// changed, and each firing Signal last sent Resend ago. A failed send is
-// retried at the next Detect. Run calls it every DetectEvery.
+// changed, and each firing Signal last sent 5 minutes ago. A failed send is
+// retried at the next Detect. Run calls it every 10 seconds.
 func (s *Sensor) Detect(ctx context.Context, now time.Time) {
 	for _, d := range s.detectors {
-		sigs, err := d.Check(ctx, now)
+		cctx, cancel := context.WithTimeout(ctx, checkDeadline)
+		sigs, err := d.Check(cctx, now)
+		cancel()
 		if err != nil {
 			s.logger.Warn("detector failed: " + err.Error())
 			continue
@@ -106,7 +118,7 @@ func (s *Sensor) Detect(ctx context.Context, now time.Time) {
 	}
 	for _, key := range slices.Sorted(maps.Keys(s.signals)) {
 		o := s.signals[key]
-		if !o.sentAt.IsZero() && now.Sub(o.sentAt) < Resend {
+		if !o.sentAt.IsZero() && now.Sub(o.sentAt) < resend {
 			continue
 		}
 		if err := s.link.Send(ctx, o.signal); err != nil {
@@ -157,7 +169,7 @@ func (s *Sensor) Run(ctx context.Context) {
 }
 
 func (s *Sensor) detect(ctx context.Context) {
-	tick := time.NewTicker(s.DetectEvery)
+	tick := time.NewTicker(detectEvery)
 	defer tick.Stop()
 	for {
 		s.Detect(ctx, time.Now())

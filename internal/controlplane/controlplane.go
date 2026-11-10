@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -136,17 +135,8 @@ func (s *Server) intake(a signal.Adapter) http.HandlerFunc {
 		}
 		ref := src.Ref()
 
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
-		if errors.As(err, new(*http.MaxBytesError)) {
-			if err := s.audit.Append(now, "request.rejected", 0, map[string]any{"source": ref, "reason": "body over 1 MiB"}); err != nil {
-				http.Error(w, "audit", http.StatusInternalServerError)
-				return
-			}
-			http.Error(w, "body over 1 MiB", http.StatusRequestEntityTooLarge)
-			return
-		}
-		if err != nil {
-			http.Error(w, "read body", http.StatusBadRequest)
+		body, ok := s.readBody(w, r, ref, now)
+		if !ok {
 			return
 		}
 		alerts, truncated, err := a.Split(body)
@@ -192,28 +182,26 @@ func (s *Server) intake(a signal.Adapter) http.HandlerFunc {
 func (s *Server) SensorSignal(w http.ResponseWriter, r *http.Request, location string) {
 	now := s.now()
 	ref := signal.SourceRef{Kind: "sensor", Instance: location}
-	reject := func(code int, event, reason string, extra map[string]any) {
-		data := map[string]any{"source": ref, "reason": reason}
-		maps.Copy(data, extra)
-		if err := s.audit.Append(now, event, 0, data); err != nil {
-			http.Error(w, "audit", http.StatusInternalServerError)
-			return
-		}
-		http.Error(w, reason, code)
-	}
-
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
-	if err != nil {
-		reject(http.StatusBadRequest, "request.rejected", "unreadable body: "+err.Error(), nil)
+	body, ok := s.readBody(w, r, ref, now)
+	if !ok {
 		return
 	}
 	var sig signal.Signal
 	if err := json.Unmarshal(body, &sig); err != nil {
-		reject(http.StatusBadRequest, "request.rejected", err.Error(), nil)
+		if err := s.audit.Append(now, "request.rejected", 0, map[string]any{"source": ref, "reason": err.Error()}); err != nil {
+			http.Error(w, "audit", http.StatusInternalServerError)
+			return
+		}
+		http.Error(w, "unparseable body", http.StatusBadRequest)
 		return
 	}
 	if sig.Target == nil || sig.Target.Location != location {
-		reject(http.StatusForbidden, "signal.rejected", "Target in another Location than the Sensor's", map[string]any{"key": sig.Key, "name": sig.Name, "target": sig.Target})
+		const reason = "Target in another Location than the Sensor's"
+		if err := s.audit.Append(now, "signal.rejected", 0, map[string]any{"source": ref, "reason": reason, "key": sig.Key, "name": sig.Name, "target": sig.Target}); err != nil {
+			http.Error(w, "audit", http.StatusInternalServerError)
+			return
+		}
+		http.Error(w, reason, http.StatusForbidden)
 		return
 	}
 	sig.Source, sig.ReceivedAt, sig.Raw = ref, now, body
@@ -223,6 +211,25 @@ func (s *Server) SensorSignal(w http.ResponseWriter, r *http.Request, location s
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// readBody reads a Signal source's request body of at most 1 MiB. On failure
+// it has answered the request, and audited a body over the bound.
+func (s *Server) readBody(w http.ResponseWriter, r *http.Request, ref signal.SourceRef, now time.Time) ([]byte, bool) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
+	if errors.As(err, new(*http.MaxBytesError)) {
+		if err := s.audit.Append(now, "request.rejected", 0, map[string]any{"source": ref, "reason": "body over 1 MiB"}); err != nil {
+			http.Error(w, "audit", http.StatusInternalServerError)
+			return nil, false
+		}
+		http.Error(w, "body over 1 MiB", http.StatusRequestEntityTooLarge)
+		return nil, false
+	}
+	if err != nil {
+		http.Error(w, "read body", http.StatusBadRequest)
+		return nil, false
+	}
+	return body, true
 }
 
 // ingest triages one Signal, stores the result, and brings its ticket up to date.

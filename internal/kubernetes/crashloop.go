@@ -137,7 +137,8 @@ func crashSignal(t signal.Target, status signal.Status, startsAt time.Time, ends
 // target follows p's controller owners to the top one, whatever its kind; a
 // Pod with no owner is its own Target. An owner the Sensor cannot read (a kind
 // the API does not serve it, a read it may not make, or an owner already
-// gone) is the top owner known.
+// gone) is the top owner known. A cluster-scoped owner, such as the Node of a
+// static Pod, is no workload and is not followed.
 func (d *CrashLoop) target(ctx context.Context, p *corev1.Pod) (signal.Target, error) {
 	t := signal.Target{Platform: "kubernetes", Location: d.location, Namespace: p.Namespace, Kind: "Pod", Name: p.Name}
 	ref := metav1.GetControllerOfNoCopy(p)
@@ -145,19 +146,19 @@ func (d *CrashLoop) target(ctx context.Context, p *corev1.Pod) (signal.Target, e
 		if ref == nil {
 			break
 		}
-		t.Kind, t.Name = ref.Kind, ref.Name
 		res, err := d.resource(ref.APIVersion, ref.Kind)
-		if err != nil || res == nil {
+		if err != nil {
 			return t, err
 		}
-		gv, _ := schema.ParseGroupVersion(ref.APIVersion) // discovery served it, so it parses
-		var owner *metav1.PartialObjectMetadata
-		if res.Namespaced {
-			owner, err = d.meta.Resource(gv.WithResource(res.Name)).Namespace(p.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-		} else {
-			t.Namespace = ""
-			owner, err = d.meta.Resource(gv.WithResource(res.Name)).Get(ctx, ref.Name, metav1.GetOptions{})
+		if res != nil && !res.Namespaced {
+			return t, nil
 		}
+		t.Kind, t.Name = ref.Kind, ref.Name
+		if res == nil {
+			return t, nil
+		}
+		gv, _ := schema.ParseGroupVersion(ref.APIVersion) // discovery served it, so it parses
+		owner, err := d.meta.Resource(gv.WithResource(res.Name)).Namespace(p.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) || apierrors.IsForbidden(err) {
 			return t, nil
 		}
