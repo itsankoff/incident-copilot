@@ -96,8 +96,9 @@ curl -s -o /dev/null -w '%{http_code}\n' -X PUT localhost:8081/debug/kill-switch
 curl -s -o /dev/null -w '%{http_code}\n' -X PUT localhost:8081/debug/kill-switch -d '{"level":"L3"}'   # expect 400
 fire ManualAdviceCheck deployment=inventory
 sleep 150
-advice 2 | grep 'capped at'
-# expect, among the caps: capped at L1: the kill switch is set to L1
+advice 2 | grep -E 'capped at|allows up to'
+# expect, among the caps: capped at L1: the kill switch is set to L1. For a healthy inventory the
+# model usually escalates: "**Escalate:**" with its own reason.
 curl -s -X PUT localhost:8081/debug/kill-switch -d '{"level":""}'          # clear it
 icp get pod -l app.kubernetes.io/name=control-plane \
   -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}{"\n"}'  # expect 0: no restart
@@ -109,8 +110,9 @@ icp get pod -l app.kubernetes.io/name=control-plane \
 fire ManualPodOnly pod=orders-7d9f8c6b5-x2k4p
 sleep 30
 advice 3
-# expect: **Autonomy level:** L1, "capped at L1: the Incident has no Target", and
-# "**Escalate:** the Incident has no Target, so no Action can be aimed at it"
+# expect: **Autonomy level:** L1, "capped at L1: the Incident has no Target", "capped at L1: there is
+# no RCA", and "**Escalate:** the Incident has no Target, so no Action can be aimed at it". No LLM call:
+audit | jq -c 'select(.incident == 3) | .type'   # investigation.skipped, remediation.skipped, no llm.request
 ```
 
 ## 6. With no Executor linked, the Advice escalates
@@ -141,11 +143,14 @@ for i in 1 2 3 4; do advice $i; done | grep -c MANUAL-TEST-ANNOTATION   # expect
 ## Clean up
 
 ```sh
-for a in ManualAdviceCheck ManualPodOnly ManualNoExecutor; do
-  am amtool alert add "$a" --end="$(date -u +%Y-%m-%dT%H:%M:%SZ)" --alertmanager.url=http://localhost:9093
-done
+end="--end=$(date -u +%Y-%m-%dT%H:%M:%SZ)"   # an Alert ends only when its labels match
+fire ManualAdviceCheck deployment=inventory "$end"
+fire ManualPodOnly pod=orders-7d9f8c6b5-x2k4p "$end"
+fire ManualNoExecutor deployment=loadgen "$end"
 make clear
 kill %1   # the port-forward
 ```
+
+To go back to a build without the Executor role, delete it first, or it crash-loops: `sen delete deployment/executor` and its `incident-copilot-executor-*` Secret.
 
 The issues the test opened stay open in the tickets repository. Close them there if you like; the Control plane does not read their state yet (#45).
