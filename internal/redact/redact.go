@@ -23,6 +23,8 @@ var patterns = []*regexp.Regexp{
 	regexp.MustCompile(`-----BEGIN[A-Z ]*PRIVATE KEY-----(?s:.*?)(?:-----END[A-Z ]*PRIVATE KEY-----|\z)`),
 	regexp.MustCompile(`\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`),
 	regexp.MustCompile(`(?i)\bbearer\s+([A-Za-z0-9._~+/=-]{20,})`),
+	// Basic credentials in an Authorization or Proxy-Authorization header.
+	regexp.MustCompile(`(?i)\b(?:proxy-)?authorization"?\s*[:=]\s*"?basic\s+([A-Za-z0-9+/]{6,}=*)`),
 	regexp.MustCompile(`\b(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b`),
 	regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`),
 	// GitHub tokens are 36 characters after the prefix today, but GitHub says
@@ -30,19 +32,21 @@ var patterns = []*regexp.Regexp{
 	regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{30,}\b|\bgithub_pat_[A-Za-z0-9_]{22,}`),
 	// Pre-signed URLs: S3, GCS, Azure SAS (GitHub job-log links), CloudFront.
 	regexp.MustCompile(`(?i)[?&](?:x-amz-signature|x-amz-credential|x-amz-security-token|x-goog-signature|x-goog-credential|signature|sig)=([^&#\s"'<>]+)`),
-	// The password in a URL's user info, such as a connection string.
-	regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^/\s:@]+:([^/\s@]+)@`),
+	// The password in a URL's user info, such as a connection string. The user
+	// may be empty, as in redis://:password@host.
+	regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^/\s:@]*:([^/\s@]+)@`),
 	regexp.MustCompile(`(?i)` + sensitiveName + `\s*[=:]\s*("[^"]*"|'[^']*'|[^\s&,;"']+)`),
 }
 
 var isSensitiveName = regexp.MustCompile(`(?i)^` + sensitiveName + `$`)
 
-// String returns s with every secret replaced by Marker.
+// String returns s with every secret replaced by Marker: first by our own
+// patterns, then by the provider rules vendored from betterleaks.
 func String(s string) string {
 	for _, p := range patterns {
 		s = replace(p, s)
 	}
-	return s
+	return redactVendored(s)
 }
 
 // replace replaces each secret p finds in s, keeping any already redacted.
@@ -108,6 +112,17 @@ func redactValue(v any) (any, bool) {
 		return v, changed
 	case map[string]any:
 		changed := false
+		// A dockerconfigjson maps each registry under "auths" to credentials
+		// whose "auth" is base64 user:password.
+		if auths, ok := v["auths"].(map[string]any); ok {
+			for _, creds := range auths {
+				if c, ok := creds.(map[string]any); ok {
+					if s, ok := c["auth"].(string); ok && s != Marker {
+						c["auth"], changed = Marker, true
+					}
+				}
+			}
+		}
 		name, _ := v["name"].(string)
 		for k, e := range v {
 			if s, ok := e.(string); ok && s != Marker && (isSensitiveName.MatchString(k) || k == "value" && isSensitiveName.MatchString(name)) {
