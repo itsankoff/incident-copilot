@@ -59,9 +59,10 @@ func (p *Pods) Diff(podsJSON []byte) ([]string, error) {
 		}
 		s := it.Status
 		var parts []string
-		waiting, restarts := "", 0
+		waiting, restarts, ready := "", 0, true
 		var last string
 		for _, c := range s.ContainerStatuses {
+			ready = ready && c.Ready
 			if c.State.Waiting != nil && c.State.Waiting.Reason != "" && waiting == "" {
 				waiting = c.State.Waiting.Reason
 			}
@@ -93,7 +94,14 @@ func (p *Pods) Diff(podsJSON []byte) ([]string, error) {
 		case restarts > 1:
 			parts = append(parts, fmt.Sprintf("%d restarts", restarts))
 		}
-		now[it.Metadata.Name] = strings.Join(parts, ", ")
+		name := it.Metadata.Name
+		// A crashed container runs briefly before it crashes again; the next
+		// crash is the news, not the gap.
+		if prev, ok := p.last[name]; ok && waiting == "" && !ready && restarts > 0 && last != "" {
+			now[name] = prev
+			continue
+		}
+		now[name] = strings.Join(parts, ", ")
 	}
 	var lines []string
 	for _, name := range slices.Sorted(maps.Keys(now)) {

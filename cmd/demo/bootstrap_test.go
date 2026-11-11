@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -19,6 +20,10 @@ type sandbox struct {
 	log  string // every stubbed install and runner call, one per line
 	env  []string
 }
+
+// forbidden are the tools a bootstrap test must never run for real.
+var forbidden = []string{"brew", "apt", "apt-get", "dnf", "yum", "zypper", "pacman", "apk", "snap", "port",
+	"sudo", "curl", "wget", "softwareupdate", "installer", "pip", "pip3", "npm"}
 
 const stubPrefix = "#!/bin/sh\necho \"$(basename \"$0\") $*\" >> \"$STUB_LOG\"\n"
 
@@ -45,6 +50,11 @@ func newSandbox(t *testing.T, os_ string) *sandbox {
 		if err := os.Symlink(p, filepath.Join(s.bin, tool)); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// Every package manager and installer is a stub that marks the run as
+	// forbidden; a test that means one to run replaces its stub.
+	for _, tool := range forbidden {
+		s.stub(tool, `echo "FORBIDDEN $0" >> "$STUB_LOG"; exit 1`)
 	}
 	s.stub("uname", `[ "$1" = -m ] && echo x86_64 || echo `+os_)
 	for _, tool := range []string{"kind", "kubectl", "helm"} {
@@ -98,6 +108,9 @@ func (s *sandbox) run(stdin string, args ...string) (out string, calls []string,
 	cmd.Stdin = strings.NewReader(stdin)
 	b, err := cmd.CombinedOutput()
 	logged, _ := os.ReadFile(s.log)
+	if strings.Contains(string(logged), "FORBIDDEN") {
+		s.t.Errorf("the bootstrap ran a tool it must not:\n%s", logged)
+	}
 	for _, l := range strings.Split(strings.TrimSpace(string(logged)), "\n") {
 		// Checks (command -v, version and docker info) are not installs.
 		if strings.HasPrefix(l, "uname") || strings.HasPrefix(l, "go env") || strings.HasPrefix(l, "docker info") || l == "" {
@@ -174,7 +187,8 @@ func TestBootstrapInstallsWithBrewOnlyAfterYes(t *testing.T) {
 func TestBootstrapWithoutHomebrewExplainsInstead(t *testing.T) {
 	s := newSandbox(t, "Darwin")
 	s.remove("helm")
-	out, _, err := s.run("y\n")
+	s.remove("brew")
+	out, _, err := s.run("n\n")
 	if err == nil {
 		t.Fatalf("ran without helm:\n%s", out)
 	}
@@ -266,6 +280,7 @@ func TestBootstrapChecksDockerResources(t *testing.T) {
 func TestBootstrapOffersHomebrewOnAFreshMac(t *testing.T) {
 	s := newSandbox(t, "Darwin")
 	s.remove("kind")
+	s.remove("brew")
 	// The stubbed Homebrew installer script creates a brew that "installs" by
 	// creating the tool.
 	s.stub("curl", `cat <<'SCRIPT'
@@ -311,4 +326,26 @@ func TestBootstrapPinsKubectlOnLinux(t *testing.T) {
 	s.remove("kubectl")
 	out, _, _ := s.run("")
 	wantContains(t, out, "https://dl.k8s.io/release/v1.35.0/bin/linux/amd64/kubectl")
+}
+
+// The sandbox holds only because the bootstrap finds every tool through PATH.
+// An absolute path to a tool would reach this machine's real one.
+func TestBootstrapNamesNoToolByAbsolutePath(t *testing.T) {
+	b, err := os.ReadFile("bootstrap.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	abs := regexp.MustCompile(`(?:^|[^\w.:/~$}-])(/(?:bin|sbin|usr|opt|etc|var|private|Library|Applications|System)(?:/[\w.+-]+)*)`)
+	allowed := map[string]bool{"/usr/bin/env": true, "/bin/bash": true, "/opt/homebrew/bin/brew": true, "/usr/local/bin/brew": true}
+	for i, line := range strings.Split(string(b), "\n") {
+		for _, m := range abs.FindAllStringSubmatch(line, -1) {
+			if !allowed[m[1]] {
+				t.Errorf("line %d names %s", i+1, m[1])
+			}
+			// Homebrew's own paths only as the default the tests override.
+			if strings.HasSuffix(m[1], "/brew") && !strings.Contains(line, "${IC_DEMO_BREW_PATHS:-") {
+				t.Errorf("line %d names %s outside IC_DEMO_BREW_PATHS", i+1, m[1])
+			}
+		}
+	}
 }

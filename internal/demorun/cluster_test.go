@@ -2,6 +2,7 @@ package demorun
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/itsankoff/incident-copilot/internal/fault"
@@ -92,5 +93,23 @@ func TestAlertsReportsFiringAndResolved(t *testing.T) {
 	}
 	if got, want := a.Diff([]fault.Alert{crash}), []string{"Alertmanager: DeploymentRolloutStuck resolved for demo/orders"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("resolved:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestPodsSkipsTheRunningGapBetweenCrashes(t *testing.T) {
+	p := &Pods{Target: "orders"}
+	if _, err := p.Diff(pods(crashLooping)); err != nil {
+		t.Fatal(err)
+	}
+	restarted := `{"metadata":{"name":"orders-b","labels":{"app.kubernetes.io/name":"orders"}},
+		"status":{"phase":"Running","conditions":[{"type":"Ready","status":"False"}],
+		"containerStatuses":[{"ready":false,"restartCount":4,"state":{"running":{}},
+		"lastState":{"terminated":{"reason":"Error","exitCode":1}}}]}}`
+	if got, _ := p.Diff(pods(restarted)); len(got) != 0 {
+		t.Errorf("gap between crashes reported: %q", got)
+	}
+	got, _ := p.Diff(pods(strings.Replace(crashLooping, `"restartCount":3`, `"restartCount":4`, 1)))
+	if want := []string{"pod orders-b: CrashLoopBackOff, last exit Error (code 1), 4 restarts"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
