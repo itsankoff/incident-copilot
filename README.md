@@ -194,16 +194,16 @@ Done:
 - [x] Four deploy fault scenarios with their ground truth, and alerts for the five Detector problems ([#46](https://github.com/itsankoff/incident-copilot/issues/46))
 - [x] A Sensor that dials out to the Control plane and answers `workload_state` and `events` Evidence queries ([#47](https://github.com/itsankoff/incident-copilot/issues/47))
 - [x] The LLM investigation loop: an RCA whose Claims cite their evidence, checked by Gate 1, with a hash-chained audit log ([#48](https://github.com/itsankoff/incident-copilot/issues/48))
+- [x] Incident lifecycle: resolve, expire, close, reopen, and recurrence ([#45](https://github.com/itsankoff/incident-copilot/issues/45))
+- [x] Redaction and untrusted-data framing for every LLM call ([#49](https://github.com/itsankoff/incident-copilot/issues/49))
+- [x] L1 Advice in the ticket, checked by Gate 1 and capped by Decide and the kill switch, with an Executor that advertises its Actions ([#56](https://github.com/itsankoff/incident-copilot/issues/56))
+- [x] Local demo ticketing and readable Incident milestone logs ([#89](https://github.com/itsankoff/incident-copilot/issues/89))
 - [x] One-command local demo, `make demo` ([#90](https://github.com/itsankoff/incident-copilot/issues/90), PR [#82](https://github.com/itsankoff/incident-copilot/pull/82))
 - [x] ADRs on the autonomy and trust model, and on product scope and platform seams
 
 In progress:
 
-- [ ] Incident lifecycle: resolve, expire, close, reopen, and recurrence ([#45](https://github.com/itsankoff/incident-copilot/issues/45), PR [#85](https://github.com/itsankoff/incident-copilot/pull/85))
 - [ ] The CrashLoopBackOff Detector ([#54](https://github.com/itsankoff/incident-copilot/issues/54), PR [#86](https://github.com/itsankoff/incident-copilot/pull/86))
-- [ ] Redaction and untrusted-data framing for every LLM call ([#49](https://github.com/itsankoff/incident-copilot/issues/49), PR [#87](https://github.com/itsankoff/incident-copilot/pull/87))
-- [ ] L1 Advice in the ticket ([#56](https://github.com/itsankoff/incident-copilot/issues/56), PR [#88](https://github.com/itsankoff/incident-copilot/pull/88))
-- [ ] Local demo ticketing and readable Incident milestone logs ([#89](https://github.com/itsankoff/incident-copilot/issues/89))
 
 Planned:
 
