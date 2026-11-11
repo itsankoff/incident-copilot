@@ -231,7 +231,7 @@ Makefile
 
 | Target | Does |
 |---|---|
-| `make tools` | Checks that `docker`, `kind`, `kubectl`, `helm`, and `go` are installed at the pinned versions |
+| `make tools` | Checks that `docker`, `kind`, `kubectl`, `helm`, and `go` are installed at the pinned versions, and warns if the optional `k9s` is missing or too old |
 | `make cluster` | Creates `ic-target` and `ic-control-plane`, and installs the observability stack in `ic-target` (`make observability`). Idempotent. |
 | `make build` / `test` / `vet` | Go build, unit tests, vet |
 | `make image` | Builds the `demo-svc` image, tagged with the Git SHA, and loads it into `ic-target` |
