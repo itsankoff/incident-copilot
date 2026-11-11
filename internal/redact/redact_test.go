@@ -16,6 +16,7 @@ var (
 	ghPAT     = "github_pat_" + "11ABCDEFG0123456789abc_" + strings.Repeat("xY12", 15)
 	jwt       = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" + ".eyJzdWIiOiIxMjM0NTY3ODkwIn0" + ".dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
 	pemKey    = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA0Z3VS5JJcds3xfn\n/ygWyF8PbnGy0AHB7MhgHcTz6sE2I2yPB\n-----END RSA PRIVATE KEY-----"
+	slackBot  = "xoxb-" + "123456789012-1234567890123-" + "AbCdEfGhIjKlMnOpQrStUvWx"
 )
 
 func TestString(t *testing.T) {
@@ -49,7 +50,12 @@ func TestString(t *testing.T) {
 			"https://productionresultssa1.blob.core.windows.net/actions-results/x/logs.txt?rsct=text%2Fplain&se=2026-11-11T10%3A00%3A00Z&sig=[REDACTED]&sp=r&sv=2021-12-02"},
 		{"GCS signed URL", "https://storage.googleapis.com/b/o?X-Goog-Signature=0a1b2c#frag", "https://storage.googleapis.com/b/o?X-Goog-Signature=[REDACTED]#frag"},
 		{"password in a URL", "dial postgres://orders:hunter2@db.demo:5432/orders failed", "dial postgres://orders:[REDACTED]@db.demo:5432/orders failed"},
+		{"Slack bot token, from the vendored rules", "--slack=" + slackBot, "--slack=[REDACTED]"},
+		{"password in a URL with an empty user", "dial tcp: redis://:Rk9pX2s3cretPa55@redis.demo:6379/0: connection refused", "dial tcp: redis://:[REDACTED]@redis.demo:6379/0: connection refused"},
 		{"already redacted stays the same", "password=[REDACTED] Bearer [REDACTED]", "password=[REDACTED] Bearer [REDACTED]"},
+		{"basic auth header", "unexpected status from HEAD request, Authorization: Basic dXNlcjpodW50ZXIyMDI2IQ== (401)",
+			"unexpected status from HEAD request, Authorization: Basic [REDACTED] (401)"},
+		{"basic auth header in JSON text", `{"Proxy-Authorization":"Basic b3JkZXJzOmh1bnRlcjI="}`, `{"Proxy-Authorization":"Basic [REDACTED]"}`},
 
 		// Near-misses: text that looks close but holds no secret.
 		{"prose about bearer tokens", "Bearer tokens are sent in a header", "Bearer tokens are sent in a header"},
@@ -125,6 +131,14 @@ func TestJSONReplacesValuesUnderSensitiveNames(t *testing.T) {
 	}
 	if again := string(JSON(json.RawMessage(out))); again != out {
 		t.Errorf("a second pass changed it:\n%s\n%s", out, again)
+	}
+}
+
+func TestJSONReplacesDockerConfigAuth(t *testing.T) {
+	in := json.RawMessage(`{"auths":{"registry.demo":{"auth":"b3JkZXJzOmdocF9GYWtlRmFrZUZha2U=","username":"orders"}},"author":"dev","oauth_url":"https://idp.demo/authorize"}`)
+	want := `{"author":"dev","auths":{"registry.demo":{"auth":"[REDACTED]","username":"orders"}},"oauth_url":"https://idp.demo/authorize"}`
+	if out := string(JSON(in)); out != want {
+		t.Errorf("JSON(%s)\n got %s\nwant %s", in, out, want)
 	}
 }
 
