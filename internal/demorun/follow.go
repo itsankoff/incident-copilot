@@ -12,10 +12,14 @@ type Follow struct {
 	TicketRef     string
 	Adapter       string // the ticketing adapter: local, github, ...
 	Investigating bool
+	Finished      bool   // the investigation ended, finished or exhausted
+	Exhausted     bool   // it ran out of budget
 	Ready         bool   // the RCA is in the ticket and it is ready for review
 	URL           string // the ticket's URL, or a path on the Control plane
 
-	pending bool // a Signal about Target arrived before its Incident id
+	// pending: a Signal about Target arrived without its Incident id, so the
+	// next triage.decision is about it, unless another Signal came between.
+	pending bool
 }
 
 // Observe records m and reports whether it is worth showing: a milestone of
@@ -25,10 +29,13 @@ func (f *Follow) Observe(m Milestone) bool {
 	case "link.up", "link.down":
 		return true
 	case "signal.received":
-		if f.Incident == 0 && strings.HasSuffix(m.Str("target"), "/"+f.Target) {
-			f.Incident = m.Incident
-			f.pending = m.Incident == 0
-			return true
+		about := strings.HasSuffix(m.Str("target"), "/"+f.Target)
+		if f.Incident == 0 {
+			f.pending = about && m.Incident == 0
+			if about {
+				f.Incident = m.Incident
+				return true
+			}
 		}
 	case "triage.decision":
 		if f.pending && m.Incident != 0 {
@@ -49,6 +56,10 @@ func (f *Follow) Observe(m Milestone) bool {
 		}
 	case "investigation.started":
 		f.Investigating = true
+	case "investigation.finished":
+		f.Finished = true
+	case "investigation.exhausted":
+		f.Finished, f.Exhausted = true, true
 	case "ticket.ready":
 		f.Ready = true
 		f.TicketRef = m.Str("ref")

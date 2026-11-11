@@ -55,3 +55,42 @@ func TestFollowShowsSensorLinkMilestones(t *testing.T) {
 		t.Error("link.down not shown")
 	}
 }
+
+func TestFollowDoesNotLockOnADecisionAfterAnotherTargetsSignal(t *testing.T) {
+	f := &Follow{Target: "orders"}
+	observeAll(t, f,
+		`{"msg":"signal.received","name":"CrashLoopBackOff","target":"ic-target/demo/Deployment/orders"}`,
+		`{"msg":"signal.received","name":"Other","target":"ic-target/demo/Deployment/inventory"}`,
+		`{"msg":"triage.decision","incident":2,"decision":"join"}`,
+	)
+	if f.Incident != 0 {
+		t.Errorf("locked on another Target's Incident: %+v", *f)
+	}
+	observeAll(t, f,
+		`{"msg":"signal.received","name":"PodCrashLooping","target":"ic-target/demo/Deployment/orders"}`,
+		`{"msg":"triage.decision","incident":5,"decision":"open"}`,
+	)
+	if f.Incident != 5 {
+		t.Errorf("follow = %+v", *f)
+	}
+}
+
+func TestFollowRecordsTheInvestigationsEnd(t *testing.T) {
+	for _, c := range []struct {
+		line      string
+		exhausted bool
+	}{
+		{`{"msg":"investigation.finished","incident":5,"confidence":"low"}`, false},
+		{`{"msg":"investigation.exhausted","incident":5,"reason":"steps"}`, true},
+	} {
+		f := &Follow{Target: "orders"}
+		observeAll(t, f,
+			`{"msg":"signal.received","incident":5,"target":"ic-target/demo/Deployment/orders"}`,
+			`{"msg":"investigation.started","incident":5}`,
+			c.line,
+		)
+		if !f.Finished || f.Exhausted != c.exhausted || f.Ready {
+			t.Errorf("%s: follow = %+v", c.line, *f)
+		}
+	}
+}

@@ -14,7 +14,6 @@ import (
 // Control plane or the Sensor logs it: a JSON slog line whose msg is the
 // matching audit event type (#89).
 type Milestone struct {
-	Time     time.Time
 	Msg      string
 	Incident int64
 	Fields   map[string]any
@@ -42,9 +41,6 @@ func ParseMilestone(line []byte) (Milestone, bool) {
 		return Milestone{}, false
 	}
 	m := Milestone{Msg: msg, Fields: fields}
-	if s, ok := fields["time"].(string); ok {
-		m.Time, _ = time.Parse(time.RFC3339Nano, s)
-	}
 	if n, ok := fields["incident"].(float64); ok {
 		m.Incident = int64(n)
 	}

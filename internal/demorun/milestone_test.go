@@ -102,12 +102,12 @@ func TestMilestoneIgnoresOtherLines(t *testing.T) {
 	}
 }
 
-func TestMilestoneKeepsIncidentAndTime(t *testing.T) {
+func TestMilestoneKeepsTheIncident(t *testing.T) {
 	m, ok := ParseMilestone([]byte(`{"time":"2026-11-11T10:00:01.5Z","level":"INFO","msg":"triage.decision","incident":12,"decision":"open"}`))
 	if !ok {
 		t.Fatal("not a milestone")
 	}
-	if m.Incident != 12 || m.Time.Format("15:04:05.0") != "10:00:01.5" {
-		t.Errorf("incident %d time %s", m.Incident, m.Time)
+	if m.Incident != 12 {
+		t.Errorf("incident %d", m.Incident)
 	}
 }

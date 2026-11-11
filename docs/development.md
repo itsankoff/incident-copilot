@@ -7,7 +7,7 @@ How to build and test incident-copilot, and how to run the demo environment one 
 - Go 1.25+, Docker, [kind](https://kind.sigs.k8s.io), `kubectl`, and [Helm](https://helm.sh). On macOS: `brew install go kind kubectl helm`. `make tools` checks them against the versions pinned in [`deploy/versions.env`](../deploy/versions.env).
 - [golangci-lint](https://golangci-lint.run), at the pinned `GOLANGCI_LINT_VERSION`, for `make lint`.
 - `jq` and the `gh` CLI, for the manual tests.
-- For the clusters: Docker with 6 CPUs and 10 GB of memory.
+- For the clusters: Docker with 6 CPUs and 10 GB of memory, and 4 CPUs and 8 GB at the least.
 
 ## Build and test
 
@@ -35,7 +35,7 @@ make clear           # restore the baseline; waits until all pods are Ready and 
 make down            # delete both clusters
 ```
 
-- **Secrets.** `make control-plane` reads `.env.demo` (template: [`.env.demo.example`](../.env.demo.example)). Without `OPENROUTER_API_KEY`, Incidents get tickets but are not investigated. Without `IC_GITHUB_REPO` and `IC_GITHUB_TOKEN`, tickets go to the Control plane's local ticket page. The README's [Configuration](../README.md#configuration) lists every variable.
+- **Secrets.** `make control-plane` reads `.env.demo`, as the README's [Configuration](../README.md#configuration) explains, with every variable.
 - **Grafana** is on by default. `make cluster GRAFANA=0` or `make observability GRAFANA=0` turns it off. Loki has no UI of its own.
 - **Redeploying uncommitted changes.** Images are tagged `<commit>-dirty` for an uncommitted tree, so a second uncommitted build reuses the tag and does not roll out. Pass a new tag each time: `make control-plane VERSION=dev-$(date +%s)`.
 - **Contexts.** Every `kubectl` and `helm` call in the Makefile pins the context of the cluster it targets, `kind-ic-target` or `kind-ic-control-plane`.

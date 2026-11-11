@@ -16,7 +16,8 @@ import (
 type UI struct {
 	out   io.Writer
 	in    *bufio.Reader
-	tty   bool
+	tty   bool // out is a terminal
+	inTTY bool // in is a terminal, which echoes the answers itself
 	color bool
 
 	mu     sync.Mutex
@@ -32,6 +33,11 @@ func NewUI(out *os.File, in io.Reader) *UI {
 		tty = fi.Mode()&os.ModeCharDevice != 0
 	}
 	u := &UI{out: out, in: bufio.NewReader(in), tty: tty, color: tty && os.Getenv("NO_COLOR") == "", stop: make(chan struct{})}
+	if f, ok := in.(*os.File); ok {
+		if fi, err := f.Stat(); err == nil {
+			u.inTTY = fi.Mode()&os.ModeCharDevice != 0
+		}
+	}
 	if tty {
 		go u.spin()
 	}
@@ -157,7 +163,7 @@ var sourceColors = map[string]string{
 // Event prints one timeline line: when, after the fault, which source says
 // so, and what.
 func (u *UI) Event(since time.Duration, source, text string) {
-	when := fmt.Sprintf("+%d:%02d", int(since.Minutes()), int(since.Seconds())%60)
+	when := "+" + Clock(since)
 	u.println(fmt.Sprintf("  %s  %s %s", u.paint(dim, when), u.paint(sourceColors[source], fmt.Sprintf("%-13s", source)), text))
 }
 
@@ -193,7 +199,16 @@ func (u *UI) Line(prompt string) (string, bool) {
 		u.println("")
 		return "", false
 	}
-	return strings.TrimSpace(s), true
+	s = strings.TrimSpace(s)
+	if !u.inTTY {
+		u.println(s)
+	}
+	return s, true
+}
+
+// Clock renders d as minutes:seconds.
+func Clock(d time.Duration) string {
+	return fmt.Sprintf("%d:%02d", int(d.Minutes()), int(d.Seconds())%60)
 }
 
 // Bar renders done of total as a fixed-width progress bar.

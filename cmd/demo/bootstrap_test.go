@@ -55,7 +55,9 @@ func newSandbox(t *testing.T, os_ string) *sandbox {
 [ "$1" = build ] && mkdir -p "${3%/*}" && printf '#!/bin/sh\necho "runner $*" >> "$STUB_LOG"\n' > "$3" && chmod +x "$3"
 exit 0`)
 	s.docker("ok", 8, 104)
-	s.env = []string{"PATH=" + s.bin, "HOME=" + s.home, "STUB_LOG=" + s.log, "STUB_BIN=" + s.bin}
+	// IC_DEMO_BREW_PATHS keeps the bootstrap away from this machine's Homebrew.
+	s.env = []string{"PATH=" + s.bin, "HOME=" + s.home, "STUB_LOG=" + s.log, "STUB_BIN=" + s.bin,
+		"IC_DEMO_BREW_PATHS=" + filepath.Join(dir, "no-such-brew")}
 	return s
 }
 
@@ -259,4 +261,54 @@ func TestBootstrapChecksDockerResources(t *testing.T) {
 			t.Errorf("%s %d/%d: calls %q", c.os, c.cpus, c.gib10, calls)
 		}
 	}
+}
+
+func TestBootstrapOffersHomebrewOnAFreshMac(t *testing.T) {
+	s := newSandbox(t, "Darwin")
+	s.remove("kind")
+	// The stubbed Homebrew installer script creates a brew that "installs" by
+	// creating the tool.
+	s.stub("curl", `cat <<'SCRIPT'
+printf '#!/bin/sh\necho "brew $*" >> "$STUB_LOG"\nprintf "#!/bin/sh\\n" > "$STUB_BIN/$2"; chmod +x "$STUB_BIN/$2"\n' > "$STUB_BIN/brew"; chmod +x "$STUB_BIN/brew"
+SCRIPT`)
+
+	out, calls, err := s.run("n\n")
+	if err == nil || len(calls) != 0 {
+		t.Fatalf("err %v calls %q:\n%s", err, calls, out)
+	}
+	wantContains(t, out, "Homebrew installs the tools below", "raw.githubusercontent.com/Homebrew/install", "make demo needs kind")
+
+	out, calls, err = s.run("y\ny\n")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if len(calls) != 4 || !strings.HasPrefix(calls[0], "curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh") || calls[1] != "brew install kind" {
+		t.Errorf("calls = %q", calls)
+	}
+}
+
+func TestBootstrapUpgradesAnOldGoWithBrew(t *testing.T) {
+	s := newSandbox(t, "Darwin")
+	s.stub("go", `[ "$1" = env ] && echo go1.22.1; exit 0`)
+	s.stub("brew", "")
+	out, _, err := s.run("")
+	if err == nil {
+		t.Fatalf("ran with an old go:\n%s", out)
+	}
+	wantContains(t, out, "is older than 1.25", "brew upgrade go")
+}
+
+func TestBootstrapNeedsGhOnlyWithBothGitHubSettings(t *testing.T) {
+	s := newSandbox(t, "Darwin")
+	s.write(filepath.Join(s.root, ".env.demo"), "IC_GITHUB_REPO=me/tickets\n")
+	if out, _, err := s.run(""); err != nil {
+		t.Fatalf("gh required without IC_GITHUB_TOKEN: %v\n%s", err, out)
+	}
+}
+
+func TestBootstrapPinsKubectlOnLinux(t *testing.T) {
+	s := newSandbox(t, "Linux")
+	s.remove("kubectl")
+	out, _, _ := s.run("")
+	wantContains(t, out, "https://dl.k8s.io/release/v1.35.0/bin/linux/amd64/kubectl")
 }

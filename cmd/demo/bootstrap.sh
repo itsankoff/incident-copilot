@@ -27,6 +27,7 @@ ask() {
   local a=''
   printf '    %s %s[y/N]%s ' "$1" "$B" "$R"
   read -r a || true
+  [ -t 0 ] || echo "$a" # a terminal echoes the answer itself
   [[ $a =~ ^[Yy]([Ee][Ss])?$ ]]
 }
 
@@ -47,7 +48,7 @@ if [ "$os" = Linux ]; then
 fi
 
 github=no
-if [ -f .env.demo ] && grep -qE '^IC_GITHUB_REPO=.+' .env.demo; then github=yes; fi
+if [ -f .env.demo ] && grep -qE '^IC_GITHUB_REPO=.+' .env.demo && grep -qE '^IC_GITHUB_TOKEN=.+' .env.demo; then github=yes; fi
 
 purpose() {
   case "$1" in
@@ -56,7 +57,7 @@ purpose() {
     kind) echo "creates the two clusters, ic-control-plane and ic-target" ;;
     kubectl) echo "deploys into both clusters and reads their state" ;;
     helm) echo "installs Prometheus, Alertmanager, Loki, and Grafana into ic-target" ;;
-    gh) echo "reads your GitHub tickets, because .env.demo sets IC_GITHUB_REPO" ;;
+    gh) echo "reads your GitHub tickets, because .env.demo sets IC_GITHUB_REPO and IC_GITHUB_TOKEN" ;;
   esac
 }
 
@@ -66,13 +67,14 @@ install_cmd() {
   local t=$1
   if [ "$os" = Darwin ]; then
     [ "$t" = docker ] && return
-    if command -v brew >/dev/null; then echo "brew install $t"; fi
+    command -v brew >/dev/null || return 0
+    if command -v "$t" >/dev/null; then echo "brew upgrade $t"; else echo "brew install $t"; fi
     return
   fi
   local bin='$HOME/.local/bin'
   case "$t" in
     kind) echo "mkdir -p $bin && curl -fsSLo $bin/kind https://kind.sigs.k8s.io/dl/$KIND_VERSION/kind-linux-$arch && chmod +x $bin/kind" ;;
-    kubectl) echo "mkdir -p $bin && curl -fsSLo $bin/kubectl https://dl.k8s.io/release/\$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/$arch/kubectl && chmod +x $bin/kubectl" ;;
+    kubectl) echo "mkdir -p $bin && curl -fsSLo $bin/kubectl https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/$arch/kubectl && chmod +x $bin/kubectl" ;;
     helm) echo "mkdir -p $bin && curl -fsSL https://get.helm.sh/helm-$HELM_VERSION-linux-$arch.tar.gz | tar -xz -C $bin --strip-components=1 linux-$arch/helm" ;;
     go) echo "rm -rf \$HOME/.local/go && mkdir -p \$HOME/.local && curl -fsSL https://go.dev/dl/go$GO_VERSION.linux-$arch.tar.gz | tar -xz -C \$HOME/.local" ;;
   esac
@@ -87,6 +89,31 @@ manual_help() {
     Linux:gh) say "Install it from your package manager: https://github.com/cli/cli/blob/trunk/docs/install_linux.md" ;;
     Darwin:*) say "Install Homebrew from https://brew.sh and re-run make demo, or install $1 yourself." ;;
   esac
+}
+
+# offer_homebrew: on macOS, Homebrew installs the other tools. Offered once.
+brew_offered=no
+offer_homebrew() {
+  [ "$os" = Darwin ] && [ "$brew_offered" = no ] && ! command -v brew >/dev/null || return 0
+  brew_offered=yes
+  local cmd='/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+  bad brew "is missing. Homebrew installs the tools below on macOS."
+  say "To install it, make demo would run Homebrew's official installer, which explains" \
+    "what it does and asks for your password itself:" "  $cmd"
+  ask "Install Homebrew now?" || return 0
+  bash -c "$cmd" || true
+  # Where Homebrew's installer puts brew. Tests point this at their sandbox,
+  # so they can never reach a real Homebrew.
+  local b
+  for b in ${IC_DEMO_BREW_PATHS:-/opt/homebrew/bin/brew /usr/local/bin/brew}; do
+    if [ -x "$b" ]; then eval "$("$b" shellenv)"; fi
+  done
+  hash -r
+  if command -v brew >/dev/null; then
+    ok brew "installed. Add Homebrew to your shell profile as its installer says."
+  else
+    bad brew "is still not usable after the install"
+  fi
 }
 
 go_too_old() {
@@ -110,6 +137,7 @@ for t in "${tools[@]}"; do
   else
     bad "$t" "is missing. It $(purpose "$t")."
   fi
+  [ "$t" != docker ] && offer_homebrew
   cmd=$(install_cmd "$t")
   if [ -z "$cmd" ]; then
     manual_help "$t"

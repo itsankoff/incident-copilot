@@ -6,7 +6,7 @@ The install paths of the bootstrap are covered by unit tests with stubbed tools 
 
 ## Before you start
 
-- **macOS or Linux**, with the tools from [`docs/development.md`](../development.md#prerequisites), `jq`, and Docker with at least 6 CPUs and 10 GB of memory.
+- **macOS or Linux**, with the tools from [`docs/development.md`](../development.md#prerequisites), `jq`, and Docker with 6 CPUs and 10 GB of memory.
 - **`.env.demo` at the repository root with `OPENROUTER_API_KEY`.** For local tickets, leave `IC_GITHUB_REPO` and `IC_GITHUB_TOKEN` unset. With them set, the test opens real issues in that repository.
 - **A shell where `kubectl config get-contexts -o name` lists `kind-ic-control-plane` and `kind-ic-target`.** Every command here pins one of those contexts.
 - **An uncommitted tree needs a new image tag each run**, or the redeploy keeps the old build: `export VERSION=dev-$(date +%s)`.
@@ -19,7 +19,7 @@ Run every command from the repository root.
 make demo F=nope </dev/null
 ```
 
-Expect one `✓` line per tool, each saying what the tool is for, and a `✓ docker has N CPUs and X GiB` line, or a `!` warning under 6 CPUs or 10 GB. Then the runner refuses the unknown fault and lists the four scenarios. No cluster is touched. `gh` is listed only when `.env.demo` sets `IC_GITHUB_REPO`.
+Expect one `✓` line per tool, each saying what the tool is for, and a `✓ docker has N CPUs and X GiB` line, or a `!` warning under 6 CPUs or 10 GB. Then the runner refuses the unknown fault and lists the four scenarios. No cluster is touched. `gh` is listed only when `.env.demo` sets both `IC_GITHUB_REPO` and `IC_GITHUB_TOKEN`.
 
 To see the Docker checks, quit Docker Desktop (on Linux: `sudo systemctl stop docker`) and run `make demo` again. Expect `its daemon is not reachable` and how to start it on your platform, not a stack trace. Start Docker again.
 

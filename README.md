@@ -68,7 +68,7 @@ Every field is made of claims that cite the tool calls behind them. A claim with
 
 ## Try it
 
-One command sets up two local Kubernetes clusters, rolls out a broken change, and follows incident-copilot from the alert to a cited RCA in a ticket. It runs on macOS and Linux, and needs Docker with 6 CPUs and 10 GB of memory and a free [OpenRouter](https://openrouter.ai) key:
+One command sets up two local Kubernetes clusters, rolls out a broken change, and follows incident-copilot from the alert to a cited RCA in a ticket. It runs on macOS and Linux, and needs Docker with 6 CPUs and 10 GB of memory (4 CPUs and 8 GB at the least) and a free [OpenRouter](https://openrouter.ai) key:
 
 ```sh
 make demo            # or make demo F=oom
@@ -154,7 +154,7 @@ The Control plane rejects a request body over 1 MiB with `413`. It cuts each lab
 | `IC_ALERTMANAGER_TOKEN` | required | Bearer token that Alertmanager sends. During rotation, two comma-separated tokens, both valid |
 | `IC_ALERTMANAGER_LOCATION` | required | Location (cluster name) of every Target resolved from its Alerts |
 | `IC_GITHUB_API_URL` | `https://api.github.com` | GitHub REST API base URL |
-| `IC_GITHUB_REPO` | unset | `owner/name` of the repository that gets one issue per Incident. Set it with `IC_GITHUB_TOKEN`, or leave both unset for the fake ticketing adapter |
+| `IC_GITHUB_REPO` | unset | `owner/name` of the repository that gets one issue per Incident. Set it with `IC_GITHUB_TOKEN`, or leave both unset for the local ticket page, which is for the demo only |
 | `IC_GITHUB_TOKEN` | unset | Token allowed to create issues and comments in `IC_GITHUB_REPO` |
 | `IC_LOCATIONS` | unset | Control plane: comma-separated `name:environment:token` entries, one per Location. A Sensor whose Location is not listed is refused |
 | `OPENROUTER_API_KEY` | unset | Control plane: OpenRouter API key for the RCA loop. Unset, Incidents get tickets but are not investigated |
@@ -180,7 +180,7 @@ The Control plane rejects a request body over 1 MiB with `413`. It cuts each lab
 
 Planned work is tracked in [GitHub Issues](https://github.com/itsankoff/incident-copilot/issues), starting from the [Wayfinder map](https://github.com/itsankoff/incident-copilot/issues/3), and its live status is on the [project board](https://github.com/users/itsankoff/projects/1). Each change goes from a specced issue to a reviewed pull request, and the board follows it from Backlog to Done. The demo environment is designed in [`docs/design/demo-environment.md`](docs/design/demo-environment.md).
 
-Done, on `master`:
+Done:
 
 - [x] Two local kind clusters, `ic-target` with the demo service and its observability stack and `ic-control-plane` for incident-copilot, wired up with a Makefile ([#73](https://github.com/itsankoff/incident-copilot/issues/73))
 - [x] Authenticated, hardened Alertmanager intake, Triage into Incidents, and one GitHub issue per Incident ([#43](https://github.com/itsankoff/incident-copilot/issues/43), [#44](https://github.com/itsankoff/incident-copilot/issues/44))
@@ -190,7 +190,7 @@ Done, on `master`:
 - [x] One-command local demo, `make demo` ([#90](https://github.com/itsankoff/incident-copilot/issues/90), PR [#82](https://github.com/itsankoff/incident-copilot/pull/82))
 - [x] ADRs on the autonomy and trust model, and on product scope and platform seams
 
-In progress, in open pull requests:
+In progress:
 
 - [ ] Incident lifecycle: resolve, expire, close, reopen, and recurrence ([#45](https://github.com/itsankoff/incident-copilot/issues/45), PR [#85](https://github.com/itsankoff/incident-copilot/pull/85))
 - [ ] The CrashLoopBackOff Detector ([#54](https://github.com/itsankoff/incident-copilot/issues/54), PR [#86](https://github.com/itsankoff/incident-copilot/pull/86))
@@ -201,7 +201,7 @@ In progress, in open pull requests:
 Planned:
 
 - [ ] The OOMKilled, stuck rollout, ImagePullBackOff, and FailedScheduling Detectors ([#55](https://github.com/itsankoff/incident-copilot/issues/55))
-- [ ] The full RCA shape with Gate 1 repair ([#50](https://github.com/itsankoff/incident-copilot/issues/50)), and the settle window with re-investigation ([#53](https://github.com/itsankoff/incident-copilot/issues/53))
+- [ ] The full RCA shape with Gate 1 repair ([#50](https://github.com/itsankoff/incident-copilot/issues/50)), the settle window with re-investigation ([#53](https://github.com/itsankoff/incident-copilot/issues/53)), and past resolved Incidents as hypotheses ([#66](https://github.com/itsankoff/incident-copilot/issues/66))
 - [ ] More Evidence: `metrics`, `logs`, `changes`, and `list_workloads` ([#51](https://github.com/itsankoff/incident-copilot/issues/51), [#52](https://github.com/itsankoff/incident-copilot/issues/52)), and the GitHub MCP server ([#62](https://github.com/itsankoff/incident-copilot/issues/62))
 - [ ] The Executor and L2: `rollback_deployment`, `restart_pod`, and `scale_up`, approve, run, verify, and escalate, edits on a review page, and approval from Slack ([#57](https://github.com/itsankoff/incident-copilot/issues/57), [#58](https://github.com/itsankoff/incident-copilot/issues/58), [#59](https://github.com/itsankoff/incident-copilot/issues/59), [#60](https://github.com/itsankoff/incident-copilot/issues/60), [#61](https://github.com/itsankoff/incident-copilot/issues/61))
 - [ ] Runbooks as investigation guides and as the source of Advice, imported from Confluence ([#63](https://github.com/itsankoff/incident-copilot/issues/63), [#64](https://github.com/itsankoff/incident-copilot/issues/64), [#65](https://github.com/itsankoff/incident-copilot/issues/65))

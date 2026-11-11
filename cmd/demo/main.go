@@ -228,11 +228,11 @@ func (r *runner) make(ctx context.Context, target, doing, done string, vars ...s
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	for {
-		r.ui.Status(fmt.Sprintf("%s (make %s, %s)", doing, target, clock(time.Since(start))))
+		r.ui.Status(fmt.Sprintf("%s (make %s, %s)", doing, target, demorun.Clock(time.Since(start))))
 		select {
 		case err := <-exited:
 			r.ui.Status("")
-			took := clock(time.Since(start))
+			took := demorun.Clock(time.Since(start))
 			if err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
@@ -248,17 +248,18 @@ func (r *runner) make(ctx context.Context, target, doing, done string, vars ...s
 	}
 }
 
-func clock(d time.Duration) string {
-	return fmt.Sprintf("%d:%02d", int(d.Minutes()), int(d.Seconds())%60)
-}
-
 func tail(path string, n int) []string {
 	b, _ := os.ReadFile(path)
 	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
 	return lines[max(0, len(lines)-n):]
 }
 
+// callTimeout bounds each kubectl call; resetState's waits bound themselves.
+const callTimeout = 3 * time.Minute
+
 func kubectl(ctx context.Context, kubeContext string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
 	return fault.KubectlFor(kubeContext)(ctx, args...)
 }
 
@@ -342,14 +343,16 @@ func (r *runner) follow(ctx context.Context) (*demorun.Follow, error) {
 
 	events := make(chan event, 64)
 	since := time.Now().Add(-5 * time.Second) // the nodes' clocks may differ a little
-	go streamLogs(ctx, cpCtx, "control-plane", "control-plane", since, events)
-	go streamLogs(ctx, targetCtx, "sensor", "sensor", since, events)
+	go streamLogs(ctx, cpCtx, "control-plane", since, events)
+	go streamLogs(ctx, targetCtx, "sensor", since, events)
 	pods, alerts := &demorun.Pods{Target: s.Inject.Target}, &demorun.Alerts{}
 	// The baseline is not news: only changes after the fault are.
 	if b, err := kubectl(ctx, targetCtx, "-n", fault.Namespace, "get", "pods", "-o", "json"); err == nil {
 		_, _ = pods.Diff(b)
 	}
-	demo := fault.Demo{Kubectl: fault.KubectlFor(targetCtx)}
+	demo := fault.Demo{Kubectl: func(ctx context.Context, args ...string) ([]byte, error) {
+		return kubectl(ctx, targetCtx, args...)
+	}}
 	if a, err := demo.FiringAlerts(ctx); err == nil {
 		alerts.Diff(a)
 	}
@@ -378,7 +381,7 @@ func (r *runner) follow(ctx context.Context) (*demorun.Follow, error) {
 
 	f := &demorun.Follow{Target: s.Inject.Target}
 	var alerted bool
-	var joinedAt time.Time
+	var joinedAt, finishedAt time.Time
 	step := ""
 	deadline := time.After(r.timeout)
 	tick := time.NewTicker(time.Second)
@@ -393,6 +396,13 @@ func (r *runner) follow(ctx context.Context) (*demorun.Follow, error) {
 			if joinedAt.IsZero() {
 				joinedAt = time.Now()
 			} else if time.Since(joinedAt) > 90*time.Second {
+				return f, nil
+			}
+		case f.Finished:
+			// The ticket follows the investigation's end within seconds.
+			if finishedAt.IsZero() {
+				finishedAt = time.Now()
+			} else if time.Since(finishedAt) > time.Minute {
 				return f, nil
 			}
 		}
@@ -426,15 +436,15 @@ func (r *runner) follow(ctx context.Context) (*demorun.Follow, error) {
 		case f.Incident == 0 && !alerted:
 			within := time.Duration(s.Expect.AlertWithin)
 			ui.Status(fmt.Sprintf("waiting for Prometheus to fire %s %s %s of up to %s",
-				strings.Join(s.Expect.Alerts, " or "), demorun.Bar(elapsed, within, 20), clock(elapsed), clock(within)))
+				strings.Join(s.Expect.Alerts, " or "), demorun.Bar(elapsed, within, 20), demorun.Clock(elapsed), demorun.Clock(within)))
 		case f.Incident == 0:
-			ui.Status("waiting for a Signal to reach the Control plane " + clock(elapsed))
+			ui.Status("waiting for a Signal to reach the Control plane " + demorun.Clock(elapsed))
 		case f.Investigating && step != "":
-			ui.Status(fmt.Sprintf("investigating with the LLM: step %s done %s", step, clock(elapsed)))
+			ui.Status(fmt.Sprintf("investigating with the LLM: step %s done %s", step, demorun.Clock(elapsed)))
 		case f.Investigating:
-			ui.Status("investigating with the LLM " + clock(elapsed))
+			ui.Status("investigating with the LLM " + demorun.Clock(elapsed))
 		default:
-			ui.Status("triage and ticketing " + clock(elapsed))
+			ui.Status("triage and ticketing " + demorun.Clock(elapsed))
 		}
 	}
 }
@@ -459,14 +469,15 @@ func poll(ctx context.Context, every time.Duration, out chan<- event, check func
 	}
 }
 
-// streamLogs follows a Deployment's log from since and sends its milestones.
-// It reconnects when kubectl stops, and skips lines it has already sent.
-func streamLogs(ctx context.Context, kubeContext, deploy, container string, since time.Time, out chan<- event) {
+// streamLogs follows the log of an incident-copilot Deployment, whose
+// container has its name, from since, and sends its milestones. It reconnects
+// when kubectl stops, and skips lines it has already sent.
+func streamLogs(ctx context.Context, kubeContext, deploy string, since time.Time, out chan<- event) {
 	source := deploy
 	seen := map[string]bool{}
 	for ctx.Err() == nil {
 		cmd := exec.CommandContext(ctx, "kubectl", "--context", kubeContext, "-n", "incident-copilot", "logs", "-f",
-			"deploy/"+deploy, "-c", container, "--since-time="+since.UTC().Format(time.RFC3339))
+			"deploy/"+deploy, "-c", deploy, "--since-time="+since.UTC().Format(time.RFC3339))
 		stdout, err := cmd.StdoutPipe()
 		if err == nil && cmd.Start() == nil {
 			sc := bufio.NewScanner(stdout)
@@ -538,8 +549,13 @@ func (r *runner) result(ctx context.Context, f *demorun.Follow) error {
 		url = r.pageBase + url
 	}
 	switch {
+	case f.Ready && f.Exhausted:
+		ui.Warn(fmt.Sprintf("Incident %d: the investigation ran out of budget before it finished. Ticket %s says what it found.", f.Incident, f.TicketRef))
 	case f.Ready:
 		ui.OK(fmt.Sprintf("Incident %d: the RCA is in ticket %s, ready for review", f.Incident, f.TicketRef))
+	case f.Finished:
+		ui.Warn(fmt.Sprintf("Incident %d: the investigation ended, but ticket %s was not marked ready for review.", f.Incident, f.TicketRef))
+		ui.Note("The Control plane's log says why: kubectl --context " + cpCtx + " -n incident-copilot logs deploy/control-plane")
 	case f.Decision == "join":
 		ui.Warn(fmt.Sprintf("The fault joined Incident %d, which was already open, so it was not investigated again.", f.Incident))
 		ui.Note("Run make demo again and answer yes to a clean Control plane state, to see a new investigation.")
@@ -550,7 +566,7 @@ func (r *runner) result(ctx context.Context, f *demorun.Follow) error {
 	if url != "" {
 		ui.Plain("Ticket: " + url)
 	}
-	if !f.Ready {
+	if !f.Ready && !f.Finished {
 		return nil
 	}
 	if rca := r.fetchRCA(ctx, f, url); rca != "" {

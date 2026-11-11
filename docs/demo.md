@@ -7,7 +7,7 @@ The first run takes about 15 minutes, most of it starting the clusters. A run on
 ## What you need
 
 - **macOS or Linux.**
-- **Docker**, with at least **6 CPUs and 10 GB of memory** for the two clusters. The demo also runs with 4 CPUs and 8 GB, but slowly. `make demo` checks the daemon and its resources, and says how to change them on your platform.
+- **Docker**, with **6 CPUs and 10 GB of memory** for the two clusters, and 4 CPUs and 8 GB at the least, where it runs slowly. `make demo` checks the daemon and its resources, and says how to change them on your platform.
 - **An OpenRouter API key.** It is the only credential the demo needs. Create a free account at [openrouter.ai](https://openrouter.ai), open [Keys](https://openrouter.ai/settings/keys), and choose **Create API Key**. The demo uses the free model tier, `openrouter/free`, so it costs nothing. `make demo` asks for the key if `.env.demo` has none, and saves it there. `.env.demo` is gitignored. Without a key, the demo still runs and opens the ticket, but nothing investigates it.
 
 `make demo` checks the other tools it needs and says what each is for: Go, kind, `kubectl`, and Helm. It offers to install a missing one, but only after you say yes. On macOS it uses Homebrew. On Linux it downloads the official binaries into `~/.local`, with no `sudo`. It never installs Docker.
@@ -162,7 +162,7 @@ To see the demo's tickets as GitHub issues, as in production:
    IC_GITHUB_TOKEN=github_pat_...
    ```
 
-`make demo` then also checks for the `gh` CLI, and reads the RCA from the issue with it.
+With both set, `make demo` also checks for the `gh` CLI, and reads the RCA from the issue with it.
 
 ## Troubleshooting
 
