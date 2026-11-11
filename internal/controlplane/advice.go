@@ -17,9 +17,9 @@ import (
 
 // AdvicePromptVersion names the remediation loop's prompts and tools. Change
 // it whenever they change.
-const AdvicePromptVersion = "advice-v1"
+const AdvicePromptVersion = "advice-v2"
 
-//go:embed prompts/advice-v1.txt
+//go:embed prompts/advice-v2.txt
 var advicePrompt string
 
 // Executors tells the Control plane what each Location's Executor offers;

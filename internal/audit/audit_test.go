@@ -97,3 +97,27 @@ func TestOpenRefusesBrokenChain(t *testing.T) {
 		t.Error("Open appended to a broken chain")
 	}
 }
+
+// Every write goes through the redactor, whatever the caller passed.
+func TestAppendRedactsSecrets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	l, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gh := "ghp_" + strings.Repeat("0123456789", 3) + "abcdef"
+	if err := l.Append(t0, "llm.error", 1, map[string]string{"error": "401 for token " + gh}); err != nil {
+		t.Fatal(err)
+	}
+	_ = l.Close()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), gh) || !strings.Contains(string(b), "401 for token [REDACTED]") {
+		t.Errorf("entry = %s", b)
+	}
+	if err := Verify(bytes.NewReader(b)); err != nil {
+		t.Errorf("Verify: %v", err)
+	}
+}

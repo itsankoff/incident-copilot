@@ -79,7 +79,7 @@ func submit(rca RCA) llm.Response {
 }
 
 // refsIn returns the call ids of the Evidence refs in req's tool results, by
-// the tool that produced them.
+// the tool that produced them. A framed result's ref is its first line.
 func refsIn(t *testing.T, req llm.Request) map[string]string {
 	t.Helper()
 	calls := map[string]string{}
@@ -98,7 +98,8 @@ func refsIn(t *testing.T, req llm.Request) map[string]string {
 		var res struct {
 			Ref evidence.Ref `json:"ref"`
 		}
-		if err := json.Unmarshal([]byte(m.Content), &res); err != nil {
+		first, _, _ := strings.Cut(m.Content, "\n")
+		if err := json.Unmarshal([]byte(first), &res); err != nil {
 			t.Fatalf("tool result is not JSON: %v: %s", err, m.Content)
 		}
 		if res.Ref.CallID != "" {
