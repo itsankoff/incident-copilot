@@ -66,7 +66,7 @@ Both clusters' nodes are containers on kind's Docker network, `kind`, which reso
 
 Everything in `monitoring` and `logging` is installed with Helm from values files under `deploy/observability/`. kube-prometheus-stack scrape jobs for etcd, the scheduler, the controller manager, and kube-proxy are disabled because they are unreachable in kind and would fire noise alerts. `NodeClockNotSynchronising` is disabled too, because Docker Desktop's VM does not report NTP sync state. The upstream `kubernetesApps` rules are off, so the workload alerts that fire are exactly the ones in `alerts.yaml`.
 
-The observability settings are tuned for speed: a 15 s scrape interval, 15 s rule evaluation, Alertmanager `group_wait: 10s`, `group_interval: 30s`, and `repeat_interval: 1h`.
+The observability settings are tuned for speed: a 15 s scrape interval, 15 s rule evaluation, Alertmanager `group_wait: 10s`, `group_interval: 1m`, and `repeat_interval: 5m`.
 
 ## Demo service: `demo-svc`
 
@@ -137,7 +137,7 @@ Every alert carries the labels `namespace`, `service` (or `pod` and `container`)
 
 Implemented so far (#46): the alerts for the five problems the built-in Detectors will cover (ADR 0002 D5): `PodCrashLooping`, `ContainerOOMKilled`, `DeploymentRolloutStuck`, `PodImagePullBackOff`, and `PodUnschedulable`. Each joins through `kube_pod_owner` and `kube_replicaset_owner` and fires once per Deployment with the labels `namespace`, `deployment`, and `severity`. The symptom alerts above come with #69. The upstream `TargetDown` rule is disabled, because a crashing or Pending demo pod is a down scrape target with no Deployment to name.
 
-Alertmanager uses the shipped route ([`deploy/alertmanager/incident-copilot.yaml`](../../deploy/alertmanager/incident-copilot.yaml)): one receiver, a webhook with `send_resolved: true` and `max_alerts: 0`, and a bearer token from the `incident-copilot-webhook` Secret, which `make observability` creates. The webhook goes to the Control plane in `ic-control-plane` at `http://ic-control-plane-control-plane:30080/webhook/alertmanager`. `Watchdog` and `InfoInhibitor` always fire, so they go to a `null` receiver.
+Alertmanager uses the shipped route's timers and receiver ([`deploy/alertmanager/incident-copilot.yaml`](../../deploy/alertmanager/incident-copilot.yaml)): one receiver, a webhook with `send_resolved: true` and `max_alerts: 0`, and a bearer token from the `incident-copilot-webhook` Secret, which `make observability` creates. The webhook goes to the Control plane in `ic-control-plane` at `http://ic-control-plane-control-plane:30080/webhook/alertmanager`. The monitoring stack's own alerts (`Watchdog`, `InfoInhibitor`, `Prometheus*`, `Alertmanager*`, `PrometheusOperator*`, `ConfigReloaderSidecarErrors`, `KubeStateMetrics*`) go to a `null` receiver first, whatever namespace they carry: they report on the stack, not on the cluster, and `InfoInhibitor` carries the namespace of the alerts it covers, such as `kube-system`. Of the rest, two kinds of alert go to the webhook: those with `namespace` `demo` or `kube-system`, and Kubernetes core alerts, matched by name (`Kube*`, `Node*`, `etcd*`) for the API server, kubelet, nodes, resources, and storage. A cluster-scoped alert carries kube-state-metrics' namespace, `monitoring`, so a namespace matcher would miss it. None of the core rules the demo runs names a workload, so each alert name has at most one open Incident per Alertmanager.
 
 ## Fault injection
 

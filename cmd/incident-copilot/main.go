@@ -1,5 +1,6 @@
 // Command incident-copilot is the incident responder. One binary runs one of
-// three roles: control-plane, sensor, or executor. The executor does not exist yet.
+// three roles: control-plane, sensor, or executor. The executor only
+// advertises its Actions so far; it runs none of them yet.
 package main
 
 import (
@@ -18,6 +19,7 @@ import (
 	"github.com/itsankoff/incident-copilot/internal/alertmanager"
 	"github.com/itsankoff/incident-copilot/internal/audit"
 	"github.com/itsankoff/incident-copilot/internal/controlplane"
+	"github.com/itsankoff/incident-copilot/internal/executor"
 	"github.com/itsankoff/incident-copilot/internal/github"
 	"github.com/itsankoff/incident-copilot/internal/kubernetes"
 	"github.com/itsankoff/incident-copilot/internal/link"
@@ -49,7 +51,7 @@ func main() {
 	case "sensor":
 		err = runSensor(ctx, logger)
 	case "executor":
-		err = fmt.Errorf("role %s: not implemented", *role)
+		err = runExecutor(ctx, logger)
 	default:
 		err = fmt.Errorf("role: want control-plane | sensor | executor, got %q", *role)
 	}
@@ -87,7 +89,7 @@ func runControlPlane(ctx context.Context, logger *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		defer func() { _ = local.Close() }()
+		defer func() { _ = local.CloseDB() }()
 		tickets, ticketPage = local, local.Handler()
 		logger.Warn("IC_GITHUB_REPO and IC_GITHUB_TOKEN unset: using the local ticketing adapter, for demo purposes only, "+
 			"with its tickets at /tickets; production uses GitHub Issues, and ServiceNow is planned (#68)", "adapter", local.Name())
@@ -105,7 +107,8 @@ func runControlPlane(ctx context.Context, logger *slog.Logger) error {
 		// Free models can take a while to answer; the RCA loop's time budget
 		// bounds the whole investigation.
 		client := openrouter.New(openrouter.APIURL, c.Key, &http.Client{Timeout: 2 * time.Minute})
-		inv = controlplane.NewInvestigator(client, c.Model, c.Budget, ev, tickets, log, logger, time.Now)
+		rem := controlplane.Remediation{Executors: hub, Reviewed: kubernetes.Actions(), Policy: cfg.Policy, KillSwitch: st}
+		inv = controlplane.NewInvestigator(client, c.Model, c.Budget, ev, rem, tickets, log, logger, time.Now)
 		model = c.Model
 	} else {
 		logger.Warn("OPENROUTER_API_KEY unset: Incidents get tickets but are not investigated")
@@ -124,10 +127,28 @@ func runControlPlane(ctx context.Context, logger *slog.Logger) error {
 	}
 	mux.Handle("/", cp.Handler())
 	srv := &http.Server{Addr: cfg.ListenAddr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	debug := &http.Server{Addr: cfg.DebugAddr, Handler: ev.DebugHandler(), ReadHeaderTimeout: 5 * time.Second}
+	debugMux := http.NewServeMux()
+	debugMux.Handle("/debug/kill-switch", controlplane.KillSwitchHandler(st, log, time.Now))
+	debugMux.Handle("/", ev.DebugHandler())
+	debug := &http.Server{Addr: cfg.DebugAddr, Handler: debugMux, ReadHeaderTimeout: 5 * time.Second}
 	errc := make(chan error, 3)
 	go func() { errc <- srv.ListenAndServe() }()
 	go func() { errc <- debug.ListenAndServe() }()
+	go func() {
+		// Expiry, idle closes, and tickets closed by a human are noticed here.
+		t := time.NewTicker(controlplane.SweepEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if err := cp.Sweep(ctx); err != nil {
+					logger.Error("sweep: " + err.Error())
+				}
+			}
+		}
+	}()
 	hubDone := make(chan struct{})
 	go func() {
 		defer close(hubDone)
@@ -135,6 +156,9 @@ func runControlPlane(ctx context.Context, logger *slog.Logger) error {
 			errc <- err
 		}
 	}()
+	if p := cfg.Policy.Problem; p != "" {
+		logger.Warn("the Environment policy " + p + ": every ceiling is L1")
+	}
 	logger.Info("control plane listening", "addr", cfg.ListenAddr, "source", cfg.Alertmanager.Instance, "ticketing", tickets.Name(), "repo", repo, "locations", len(cfg.Locations), "model", model)
 
 	select {
@@ -159,5 +183,15 @@ func runSensor(ctx context.Context, logger *slog.Logger) error {
 	}
 	logger.Info("sensor dialing", "location", cfg.Location, "controlPlane", cfg.ControlPlaneURL)
 	sensor.New(link.NewClient(cfg.ControlPlaneURL, cfg.Location, cfg.Token), tools, logger).Run(ctx)
+	return nil
+}
+
+func runExecutor(ctx context.Context, logger *slog.Logger) error {
+	cfg, err := executor.LoadConfig(os.Getenv)
+	if err != nil {
+		return err
+	}
+	logger.Info("executor dialing", "location", cfg.Location, "controlPlane", cfg.ControlPlaneURL)
+	executor.New(link.NewClient(cfg.ControlPlaneURL, cfg.Location, cfg.Token), kubernetes.Actions(), logger).Run(ctx)
 	return nil
 }

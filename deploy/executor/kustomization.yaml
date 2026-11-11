@@ -1,0 +1,9 @@
+# The incident-copilot Executor in ic-target. `make executor` applies this
+# through a generated overlay (build/executor) that sets the image tag and
+# generates the incident-copilot-executor Secret.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: incident-copilot
+resources:
+  - namespace.yaml
+  - executor.yaml

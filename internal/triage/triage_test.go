@@ -30,10 +30,10 @@ func TestTriage(t *testing.T) {
 	now := t0.Add(2 * time.Minute)
 
 	crash := sig("am/aaa", "KubePodCrashLooping", orders, t0)
-	ordersInc := Incident{ID: 1, Target: orders, OpenedAt: t0, Members: []Member{member(crash, t0)}, TicketRef: "41"}
+	ordersInc := Incident{ID: 1, Target: orders, OpenedAt: t0, Members: []Member{member(crash, t0)}, TicketRef: "41", State: StateOpen}
 
 	podOnly := sig("am/ppp", "PodNotReady", nil, t0)
-	podOnlyInc := Incident{ID: 2, Key: "am/ppp", OpenedAt: t0, Members: []Member{member(podOnly, t0)}}
+	podOnlyInc := Incident{ID: 2, Key: "am/PodNotReady", OpenedAt: t0, Members: []Member{member(podOnly, t0)}, State: StateOpen}
 
 	tests := []struct {
 		name    string
@@ -49,11 +49,17 @@ func TestTriage(t *testing.T) {
 		{"same key, new startsAt is a new episode and joins", []Incident{ordersInc}, sig("am/aaa", "KubePodCrashLooping", orders, t0.Add(time.Minute)), Join, 1, 2},
 		{"same key and startsAt is a repeat notice", []Incident{ordersInc}, crash, Repeat, 1, 1},
 		{"different Target opens a second Incident", []Incident{ordersInc}, sig("am/ccc", "KubePodCrashLooping", inventory, t0), Open, 0, 1},
-		{"no Target opens keyed by key", []Incident{ordersInc}, podOnly, Open, 0, 1},
-		{"no Target joins by key", []Incident{ordersInc, podOnlyInc}, sig("am/ppp", "PodNotReady", nil, t0.Add(time.Minute)), Join, 2, 2},
+		{"no Target opens keyed by source and name", []Incident{ordersInc}, podOnly, Open, 0, 1},
+		{"no Target, same key, new startsAt joins", []Incident{ordersInc, podOnlyInc}, sig("am/ppp", "PodNotReady", nil, t0.Add(time.Minute)), Join, 2, 2},
+		{"no Target, other series of the same name joins", []Incident{ordersInc, podOnlyInc}, sig("am/qqq", "PodNotReady", nil, t0), Join, 2, 2},
 		{"no Target never joins a Target's Incident", []Incident{ordersInc}, sig("am/aaa", "KubePodCrashLooping", nil, t0), Open, 0, 1},
-		{"no Target, different key opens", []Incident{podOnlyInc}, sig("am/qqq", "PodNotReady", nil, t0), Open, 0, 1},
-		{"resolved is dropped (resolve is #45)", []Incident{ordersInc}, func() signal.Signal { s := crash; s.Status = signal.Resolved; return s }(), Drop, 0, 0},
+		{"no Target, different name opens", []Incident{podOnlyInc}, sig("am/qqq", "KubePodNotReady", nil, t0), Open, 0, 1},
+		{"no Target, same name from another source opens", []Incident{podOnlyInc}, func() signal.Signal {
+			s := sig("am2/ppp", "PodNotReady", nil, t0)
+			s.Source.Instance = "am2"
+			return s
+		}(), Open, 0, 1},
+		{"resolving the last member resolves", []Incident{ordersInc}, func() signal.Signal { s := crash; s.Status = signal.Resolved; return s }(), Resolve, 1, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -83,14 +89,14 @@ func TestTriageOpenRecordsTargetOrKey(t *testing.T) {
 	}
 
 	d = Triage(nil, sig("am/ppp", "PodNotReady", nil, t0), now)
-	if d.Incident.Target != nil || d.Incident.Key != "am/ppp" {
+	if d.Incident.Target != nil || d.Incident.Key != "am/PodNotReady" {
 		t.Errorf("no-Target Incident: target %v, key %q", d.Incident.Target, d.Incident.Key)
 	}
 }
 
 func TestTriageRepeatUpdatesLastSeenOnly(t *testing.T) {
 	crash := sig("am/aaa", "KubePodCrashLooping", orders, t0)
-	inc := Incident{ID: 1, Target: orders, OpenedAt: t0, Members: []Member{member(crash, t0)}}
+	inc := Incident{ID: 1, Target: orders, OpenedAt: t0, Members: []Member{member(crash, t0)}, State: StateOpen}
 	now := t0.Add(5 * time.Minute)
 
 	d := Triage([]Incident{inc}, crash, now)
@@ -105,7 +111,7 @@ func TestTriageRepeatUpdatesLastSeenOnly(t *testing.T) {
 
 func TestTriageResolvedForUnknownKeyIsDropped(t *testing.T) {
 	crash := sig("am/aaa", "KubePodCrashLooping", orders, t0)
-	open := []Incident{{ID: 1, Target: orders, OpenedAt: t0, Members: []Member{member(crash, t0)}}}
+	open := []Incident{{ID: 1, Target: orders, OpenedAt: t0, Members: []Member{member(crash, t0)}, State: StateOpen}}
 
 	unknown := sig("am/zzz", "KubePodCrashLooping", orders, t0)
 	unknown.Status = signal.Resolved
@@ -114,7 +120,7 @@ func TestTriageResolvedForUnknownKeyIsDropped(t *testing.T) {
 	}
 	known := crash
 	known.Status = signal.Resolved
-	if d := Triage(open, known, t0); d.Kind != Drop || d.Reason == "resolved Signal for an unknown key" {
-		t.Errorf("known key: %s %q, want a drop that is not for an unknown key", d.Kind, d.Reason)
+	if d := Triage(open, known, t0); d.Kind != Resolve {
+		t.Errorf("known key: %s %q, want a resolve", d.Kind, d.Reason)
 	}
 }

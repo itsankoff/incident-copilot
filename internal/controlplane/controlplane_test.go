@@ -34,12 +34,60 @@ const (
 type ticket struct{ ref, title, body string }
 type comment struct{ ref, body string }
 
-// fakeTickets records what the Control plane writes to the ticketing system.
+// fakeTickets records what the Control plane writes to the ticketing system,
+// and holds each ticket's state.
 type fakeTickets struct {
 	mu       sync.Mutex
 	created  []ticket
 	comments []comment
+	closes   []string          // refs the Control plane closed
+	retitled []ticket          // title changes, without a body
+	closed   map[string]string // ref to close reason, by anyone
 	fail     bool
+}
+
+// closeByHuman closes ticket ref with reason, as a human would.
+func (f *fakeTickets) closeByHuman(ref, reason string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.closed == nil {
+		f.closed = map[string]string{}
+	}
+	f.closed[ref] = reason
+}
+
+func (f *fakeTickets) State(_ context.Context, ref string) (bool, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail {
+		return false, "", errors.New("ticketing down")
+	}
+	reason, ok := f.closed[ref]
+	return ok, reason, nil
+}
+
+func (f *fakeTickets) Close(_ context.Context, ref string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail {
+		return errors.New("ticketing down")
+	}
+	f.closes = append(f.closes, ref)
+	if f.closed == nil {
+		f.closed = map[string]string{}
+	}
+	f.closed[ref] = "completed"
+	return nil
+}
+
+func (f *fakeTickets) SetTitle(_ context.Context, ref, title string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail {
+		return errors.New("ticketing down")
+	}
+	f.retitled = append(f.retitled, ticket{ref: ref, title: title})
+	return nil
 }
 
 func (f *fakeTickets) Create(_ context.Context, title, body string) (string, error) {
@@ -72,6 +120,7 @@ type harness struct {
 	dir     string
 	url     string
 	store   *store.Store
+	log     *audit.Log
 	tickets *fakeTickets
 	logs    *syncBuffer // the Control plane's log, at every level
 	cp      *Server
@@ -101,7 +150,7 @@ func start(t *testing.T, dir string, tickets *fakeTickets, sources []signal.Sour
 
 // startWith is start with an Investigator built by inv, when set.
 func startWith(t *testing.T, dir string, tickets *fakeTickets, sources []signal.Source, wrap func(*store.Store) Store,
-	inv func(*audit.Log, Ticketing, *slog.Logger, func() time.Time) *Investigator) *harness {
+	inv func(*store.Store, *audit.Log, Ticketing, *slog.Logger, func() time.Time) *Investigator) *harness {
 	t.Helper()
 	st, err := store.Open(filepath.Join(dir, "state.db"))
 	if err != nil {
@@ -111,7 +160,7 @@ func startWith(t *testing.T, dir string, tickets *fakeTickets, sources []signal.
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{t: t, dir: dir, store: st, tickets: tickets, logs: &syncBuffer{}, now: t0.Add(time.Minute)}
+	h := &harness{t: t, dir: dir, store: st, log: log, tickets: tickets, logs: &syncBuffer{}, now: t0.Add(time.Minute)}
 	logger := slog.New(slog.NewJSONHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	var s Store = st
 	if wrap != nil {
@@ -120,7 +169,7 @@ func startWith(t *testing.T, dir string, tickets *fakeTickets, sources []signal.
 	now := func() time.Time { return h.now }
 	var investigator *Investigator
 	if inv != nil {
-		investigator = inv(log, tickets, logger, now)
+		investigator = inv(st, log, tickets, logger, now)
 	}
 	h.cp = New(alertmanager.New(sources), s, tickets, log, logger, now, investigator)
 	srv := httptest.NewServer(h.cp.Handler())
@@ -329,8 +378,8 @@ func TestPodOnlyAlertHasNoTarget(t *testing.T) {
 		t.Fatalf("%d tickets, want 1", len(h.tickets.created))
 	}
 	tk := h.tickets.created[0]
-	if !strings.Contains(tk.title, "prod-am/ppp") || !strings.Contains(tk.title, "KubePodNotReady") {
-		t.Errorf("title %q does not name the key and Signal", tk.title)
+	if tk.title != "[critical] KubePodNotReady from prod-am (no Target)" {
+		t.Errorf("title %q does not name the Signal and its source", tk.title)
 	}
 	if strings.Contains(tk.title+tk.body, "Deployment") {
 		t.Errorf("a Target was derived from a pod name: %q\n%s", tk.title, tk.body)
@@ -341,6 +390,18 @@ func TestPodOnlyAlertHasNoTarget(t *testing.T) {
 	}
 	if sig.Target != nil {
 		t.Errorf("Signal has Target %+v, want none", *sig.Target)
+	}
+}
+
+func TestNoTargetSeriesOfOneRuleShareATicket(t *testing.T) {
+	h := newHarness(t, t.TempDir(), &fakeTickets{})
+	h.send(tokenProd,
+		alert("PrometheusMissingRuleEvaluations", "g1", map[string]string{"namespace": "monitoring", "rule_group": "a"}),
+		alert("PrometheusMissingRuleEvaluations", "g2", map[string]string{"namespace": "monitoring", "rule_group": "b"}),
+	)
+
+	if len(h.tickets.created) != 1 || len(h.tickets.comments) != 1 {
+		t.Fatalf("%d tickets, %d comments, want 1 and 1", len(h.tickets.created), len(h.tickets.comments))
 	}
 }
 
@@ -456,10 +517,10 @@ func TestResolvedForUnknownKeyIsAuditedAndDropped(t *testing.T) {
 	}
 }
 
-// failingStore fails every read of the open Incidents.
+// failingStore fails every read of the Incidents.
 type failingStore struct{ *store.Store }
 
-func (failingStore) OpenIncidents(context.Context) ([]triage.Incident, error) {
+func (failingStore) Incidents(context.Context) ([]triage.Incident, error) {
 	return nil, errors.New("disk I/O error")
 }
 
@@ -588,7 +649,7 @@ func TestHAPairDuplicateIsOneIncident(t *testing.T) {
 		t.Fatalf("second member: status %d", code)
 	}
 
-	open, err := h.store.OpenIncidents(context.Background())
+	open, err := h.store.Incidents(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

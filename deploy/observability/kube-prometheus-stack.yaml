@@ -79,20 +79,34 @@ alertmanager:
     # Mounted at /etc/alertmanager/secrets/incident-copilot-webhook/; the
     # Makefile creates it.
     secrets: [incident-copilot-webhook]
-  # The shipped route, deploy/alertmanager/incident-copilot.yaml; keep the two
-  # in step. The URL is the Control plane's NodePort in ic-control-plane, by
+  # The shipped route, deploy/alertmanager/incident-copilot.yaml, with child
+  # routes that choose what reaches it; keep the timers and receiver in step
+  # with it. The URL is the Control plane's NodePort in ic-control-plane, by
   # its node's container name on kind's Docker network.
   config:
     route:
-      receiver: incident-copilot
+      # The demo's alerts and Kubernetes core alerts reach incident-copilot.
+      # The monitoring stack's own alerts (Watchdog, InfoInhibitor,
+      # Prometheus*, Alertmanager*, PrometheusOperator*,
+      # ConfigReloaderSidecarErrors, KubeStateMetrics*) go to null: they
+      # report on the stack, not on the cluster.
+      receiver: "null"
       group_by: ['...']
       group_wait: 10s
       group_interval: 1m
       repeat_interval: 5m
       routes:
-        # Always firing by design; they name no workload.
+        # First, because InfoInhibitor carries the namespace of the alerts it
+        # covers, so it can match the namespace route below.
         - receiver: "null"
-          matchers: ['alertname =~ "Watchdog|InfoInhibitor"']
+          matchers: ['alertname =~ "Watchdog|InfoInhibitor|Prometheus.*|Alertmanager.*|ConfigReloaderSidecarErrors|KubeStateMetrics.*"']
+        - receiver: incident-copilot
+          matchers: ['namespace =~ "demo|kube-system"']
+        # Kubernetes core: API server, kubelet, nodes, node-exporter, etcd,
+        # resources and storage. Matched by name, because a cluster-scoped
+        # alert carries kube-state-metrics' namespace, "monitoring".
+        - receiver: incident-copilot
+          matchers: ['alertname =~ "Kube.*|Node.*|etcd.*"']
     receivers:
       - name: "null"
       - name: incident-copilot

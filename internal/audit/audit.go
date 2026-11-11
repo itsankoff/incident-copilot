@@ -15,6 +15,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/itsankoff/incident-copilot/internal/redact"
 )
 
 // Entry is one line of the audit log.
@@ -51,7 +53,8 @@ func Open(path string) (*Log, error) {
 	return &Log{f: f, seq: last.Seq, prev: last.Hash}, nil
 }
 
-// Append writes one entry and syncs it to disk before returning.
+// Append writes one entry and syncs it to disk before returning. data goes
+// through the redactor first, so no secret reaches the log (ADR 0003 D8).
 func (l *Log) Append(t time.Time, typ string, incident int64, data any) error {
 	var raw json.RawMessage
 	if data != nil {
@@ -59,7 +62,7 @@ func (l *Log) Append(t time.Time, typ string, incident int64, data any) error {
 		if err != nil {
 			return fmt.Errorf("audit %s: %w", typ, err)
 		}
-		raw = b
+		raw = redact.JSON(b)
 	}
 
 	l.mu.Lock()

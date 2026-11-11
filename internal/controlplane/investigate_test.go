@@ -13,6 +13,7 @@ import (
 	"github.com/itsankoff/incident-copilot/internal/audit"
 	"github.com/itsankoff/incident-copilot/internal/evidence"
 	"github.com/itsankoff/incident-copilot/internal/llm"
+	"github.com/itsankoff/incident-copilot/internal/store"
 )
 
 // fakeLink stands in for every Sensor: it answers each Call with canned data,
@@ -79,7 +80,7 @@ func submit(rca RCA) llm.Response {
 }
 
 // refsIn returns the call ids of the Evidence refs in req's tool results, by
-// the tool that produced them.
+// the tool that produced them. A framed result's ref is its first line.
 func refsIn(t *testing.T, req llm.Request) map[string]string {
 	t.Helper()
 	calls := map[string]string{}
@@ -98,7 +99,8 @@ func refsIn(t *testing.T, req llm.Request) map[string]string {
 		var res struct {
 			Ref evidence.Ref `json:"ref"`
 		}
-		if err := json.Unmarshal([]byte(m.Content), &res); err != nil {
+		first, _, _ := strings.Cut(m.Content, "\n")
+		if err := json.Unmarshal([]byte(first), &res); err != nil {
 			t.Fatalf("tool result is not JSON: %v: %s", err, m.Content)
 		}
 		if res.Ref.CallID != "" {
@@ -110,9 +112,9 @@ func refsIn(t *testing.T, req llm.Request) map[string]string {
 
 func startRCA(t *testing.T, model llm.Client, l *fakeLink, budget Budget) *harness {
 	t.Helper()
-	return startWith(t, t.TempDir(), &fakeTickets{}, prodAndStaging(), nil, func(log *audit.Log, tickets Ticketing, logger *slog.Logger, now func() time.Time) *Investigator {
+	return startWith(t, t.TempDir(), &fakeTickets{}, prodAndStaging(), nil, func(_ *store.Store, log *audit.Log, tickets Ticketing, logger *slog.Logger, now func() time.Time) *Investigator {
 		ev := NewEvidence([]Location{{Name: "prod", Environment: "production", Token: "x"}}, l, log, now)
-		return NewInvestigator(model, "openrouter/free", budget, ev, tickets, log, logger, now)
+		return NewInvestigator(model, "openrouter/free", budget, ev, Remediation{}, tickets, log, logger, now)
 	})
 }
 
@@ -369,7 +371,7 @@ func TestAnInvestigationIsAuditedWholeAndReproducibly(t *testing.T) {
 	if f := ofType(log, "investigation.finished"); !strings.Contains(string(f[0].Data), `"answeredBy":["vendor/free-model-1","vendor/free-model-2","vendor/free-model-3"]`) {
 		t.Errorf("investigation.finished lacks the answering models: %s", f[0].Data)
 	}
-	if c := ofType(log, "ticket.commented"); len(c) != 1 || !strings.Contains(string(c[0].Data), `"kind":"rca"`) {
+	if c := ofType(log, "ticket.commented"); len(c) != 2 || !strings.Contains(string(c[0].Data), `"kind":"rca"`) {
 		t.Errorf("ticket.commented = %+v", c)
 	}
 }

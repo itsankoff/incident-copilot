@@ -53,7 +53,7 @@ All three roles are one Go binary. The Control plane is central and serves one o
 - **Evidence sources.** Each backend is reached through exactly one route: Sensor typed tools in the Location, or an MCP server reached through our own MCP client next to the Control plane (GitHub in v1). Every result is redacted, size-capped, and wrapped in an evidence ref. The Sensor relay to MCP servers inside a Location is designed but built after v1.
 - **Sensor.** One per Location, read-only, never calls an LLM. Runs the five Kubernetes Detectors and answers Evidence queries within its namespace allowlist, redacting at the source. See [ADR 0002](0002-product-scope-and-platform-seams.md) D5.
 - **Executor.** One per Location, the only component that changes state, and it never calls an LLM. It runs one Action per call with its Location's own credentials: validate, write the audit intent, check the Target version and preconditions, apply, run the Action's mechanical check, report. It has no access to ticketing or approval channels.
-- **Ticketing adapter.** An interface with GitHub Issues and ServiceNow implementations. One ticket per Incident, and the ticket is the source of truth for human-facing state.
+- **Ticketing adapter.** An interface with GitHub Issues and ServiceNow implementations, plus a local adapter for demos only. One ticket per Incident, and the ticket is the source of truth for human-facing state.
 - **Audit log.** Hash-chained JSONL, one chain in the Control plane and a write-ahead chain in each Executor. Records every Signal, tool call, LLM request and response, Gate 1 result, decision, Approval, and step. See [ADR 0003](0003-trust-model-and-safety-invariants.md) D8.
 
 ### The platform seam

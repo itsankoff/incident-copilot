@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/itsankoff/incident-copilot/internal/evidence"
+	"github.com/itsankoff/incident-copilot/internal/redact"
 )
 
 // Config is the Sensor's configuration.
@@ -94,6 +95,9 @@ func (s *Sensor) answer(ctx context.Context, c evidence.Call) {
 	}
 }
 
+// run answers c. The Sensor is the edge that fetches the data, so it
+// redacts the answer, error text included, before it leaves the Location;
+// the Control plane redacts it again (ADR 0003 D8).
 func (s *Sensor) run(ctx context.Context, c evidence.Call) evidence.Answer {
 	t, ok := s.tools[c.Tool]
 	if !ok {
@@ -101,8 +105,9 @@ func (s *Sensor) run(ctx context.Context, c evidence.Call) evidence.Answer {
 	}
 	data, err := t.Run(ctx, c.Query)
 	if err != nil {
-		return evidence.Answer{Error: err.Error()}
+		return evidence.Answer{Error: redact.String(err.Error())}
 	}
+	data = redact.JSON(data)
 	if len(data) > evidence.MaxAnswer {
 		return evidence.Answer{Error: "answer over 1 MiB"}
 	}

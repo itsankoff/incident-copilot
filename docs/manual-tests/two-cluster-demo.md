@@ -71,7 +71,7 @@ audit | jq -c '[.seq, .type, .incident, (.data.kind // .data.ref // "")]'
 icp logs deploy/control-plane | jq -c 'select(.msg == "ticket.created") | {incident, adapter, ref}'
 ```
 
-Within about 10 seconds (`group_wait`), the audit log shows `signal.received`, `triage.decision` (`open`), and `ticket.created` with a ticket number as its ref. The log shows `ticket.created` with the adapter `local` and the same ref. [Local ticketing and milestone logs](local-ticketing-and-milestones.md) shows the ticket's page. Other demo alerts can arrive too, if any are firing. `Watchdog` never does.
+Within about 10 seconds (`group_wait`), the audit log shows `signal.received`, `triage.decision` (`open`), and `ticket.created` with a ticket number as its ref. The log shows `ticket.created` with the adapter `local` and the same ref. [Local ticketing and milestone logs](local-ticketing-and-milestones.md) shows the ticket's page, with the title `[warning] FakeTicketCheck on ic-target/demo/Deployment/inventory`. Other demo alerts and Kubernetes core alerts can arrive too, if any are firing. `Watchdog` never does.
 
 Resolve the alert, so it stops repeating:
 
@@ -99,7 +99,7 @@ audit | jq -c 'select(.type == "ticket.created") | [.seq, .incident, .data.ref]'
 gh issue list -R "$(grep '^IC_GITHUB_REPO=' .env.demo | cut -d= -f2)" --limit 3
 ```
 
-A new `ticket.created` entry holds an issue number, and the issue `GitHubTicketCheck on ic-target/demo/Deployment/orders` is in the tickets repository. Open it and check that `MANUAL-TEST-ANNOTATION` is not in it.
+A new `ticket.created` entry holds an issue number, and the issue `[warning] GitHubTicketCheck on ic-target/demo/Deployment/orders` is in the tickets repository. Open it and check that `MANUAL-TEST-ANNOTATION` is not in it.
 
 Resolve it. With `send_resolved: true`, Alertmanager sends the resolved notice after `group_interval` (1 minute):
 
@@ -107,7 +107,7 @@ Resolve it. With `send_resolved: true`, Alertmanager sends the resolved notice a
 fire GitHubTicketCheck orders --end="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 sleep 75
 audit | jq -c 'select(.type == "triage.decision") | [.seq, .data.kind, (.data.reason // "")]' | tail -1
-# expect: drop, "resolved Signals are not handled yet" (resolving Incidents is #45)
+# expect: resolve. The issue gets a "Resolved" comment with outcome resolved, and stays open.
 ```
 
 If nothing arrives in step 3 or 4, check `am wget -qO- http://localhost:9093/metrics | grep notifications_failed_total`. If the count grows, Alertmanager cannot reach `ic-control-plane-control-plane:30080` or its token is wrong, and the Alertmanager log says which: `kubectl --context kind-ic-target -n monitoring logs alertmanager-kps-alertmanager-0 -c alertmanager | tail`.
