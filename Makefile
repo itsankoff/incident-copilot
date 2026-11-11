@@ -75,8 +75,16 @@ tools: ## Check that required tools are installed
 
 ##@ Demo environment
 
+.PHONY: demo
+demo: ## Run the whole demo: check prerequisites, set up both clusters, roll out a fault (F=<scenario>, default crash-loop), follow it to an RCA
+	@bash cmd/demo/bootstrap.sh $(if $(F),-fault $(F))
+
 .PHONY: cluster
-cluster: tools ## Create the ic-target and ic-control-plane kind clusters and install the observability stack (idempotent)
+cluster: kind-clusters ## Create the ic-target and ic-control-plane kind clusters and install the observability stack (idempotent)
+	$(MAKE) observability
+
+.PHONY: kind-clusters
+kind-clusters: tools ## Create the ic-target and ic-control-plane kind clusters, reusing existing ones
 	@for c in $(TARGET_CLUSTER):target $(CONTROL_PLANE_CLUSTER):control-plane; do \
 	  name=$${c%%:*}; \
 	  if kind get clusters 2>/dev/null | grep -qx "$$name"; then \
@@ -86,7 +94,6 @@ cluster: tools ## Create the ic-target and ic-control-plane kind clusters and in
 	      --image $(KIND_NODE_IMAGE) --wait 120s; \
 	  fi; \
 	done
-	$(MAKE) observability
 
 .PHONY: observability
 observability: ## Install or upgrade Prometheus, Alertmanager, Loki, and Alloy in ic-target
