@@ -1,6 +1,6 @@
 # Manual test: The CrashLoopBackOff Detector
 
-This test checks that the Sensor in `ic-target` spots a crash loop on its own, from the Kubernetes API alone, and that the Control plane takes its Detector Signal in. An `orders` rollout that crash-loops produces one Detector Signal for Deployment `orders`, however many pods crash, and it lands in the same Incident and ticket as Prometheus's `PodCrashLooping` alert. It also checks that the Sensor re-sends a firing Signal every 5 minutes, that it sends a resolution 10 quiet minutes after the fault is cleared, that a pod with no owner is its own Target, that a namespace outside the Sensor's allowlist is not watched, and that a Detector Signal naming another Location is rejected. Run it whenever `internal/sensor`, `internal/kubernetes`, `internal/link`, the Control plane's Signal intake, or `deploy/sensor` change.
+This test checks that the Sensor in `ic-target` spots a crash loop on its own, from the Kubernetes API alone, and that the Control plane takes its Detector Signal in. An `orders` rollout that crash-loops produces one Detector Signal for Deployment `orders`, however many pods crash, and it lands in the same Incident and ticket as Prometheus's `PodCrashLooping` alert. It also checks that the Sensor re-sends a firing Signal every 5 minutes, that it sends a resolution 10 quiet minutes after the fault is cleared and that the resolution resolves the Incident, that a pod with no owner is its own Target, that a namespace outside the Sensor's allowlist is not watched, and that a Detector Signal naming another Location is rejected. Run it whenever `internal/sensor`, `internal/kubernetes`, `internal/link`, the Control plane's Signal intake, or `deploy/sensor` change.
 
 It runs on the existing, long-lived clusters. It never deletes them.
 
@@ -8,7 +8,7 @@ It runs on the existing, long-lived clusters. It never deletes them.
 
 - **Both clusters are up**, from `make cluster` (see [the two-cluster demo](two-cluster-demo.md#before-you-start) for the prerequisites), with `jq` installed.
 - **`.env.demo` at the repository root**, as in [the GitHub Issues manual test](github-issues.md#before-you-start). Without it, `make control-plane` switches the Control plane to the fake ticketing adapter. The steps below open real issues in the tickets repository, and new Incidents are investigated by the LLM.
-- **Resolving Incidents is not built yet (#45).** An Incident stays open forever, so if an earlier run left one on `demo/Deployment/orders`, this run's Signals join it instead of opening a new one. That still shows the merge. To see a fresh Incident, reset the Control plane's state in step 1. The reset deletes every Incident and the whole audit log.
+- **Triage keeps one Incident per Target until its ticket is closed** ([the Incident lifecycle](incident-lifecycle.md)). If an earlier run left an open or resolved Incident on `demo/Deployment/orders`, this run's Signals join or reopen it instead of opening a new one. That still shows the merge. To see a fresh Incident, reset the Control plane's state in step 1. The reset deletes every Incident and the whole audit log.
 
 Run every command from the repository root, in bash, in one shell.
 
@@ -42,8 +42,8 @@ audit() {
 # Signals since $1, what Triage did with them, and the tickets and investigations they caused.
 signals() {
   audit | jq -c --arg t "$1" 'select(.time > $t and (.type | IN("signal.received", "triage.decision", "signal.rejected",
-      "ticket.created", "ticket.commented", "investigation.started", "investigation.finished")))
-    | [.seq, .time[11:19], .type, .incident, (.data.source.kind // ""), (.data.key // .data.ref // ""), (.data.status // .data.kind // .data.reason // "")]'
+      "ticket.created", "ticket.commented", "ticket.retitled", "investigation.started", "investigation.finished")))
+    | [.seq, .time[11:19], .type, .incident, (.data.source.kind // ""), (.data.key // .data.ref // ""), (.data.status // .data.kind // .data.reason // ""), (.data.outcome // "")]'
 }
 sen get deploy/sensor -o jsonpath='{.spec.template.spec.containers[0].env}' | jq -c '.[] | select(.name == "IC_SENSOR_NAMESPACES")'
 # expect {"name":"IC_SENSOR_NAMESPACES","value":"demo"}
@@ -87,16 +87,25 @@ sleep 300; signals "$T0" | grep detector:CrashLoopBackOff
 # followed by triage.decision "repeat" on the same Incident: the same startsAt, so it only updates last-seen
 ```
 
-## 4. Clearing the fault resolves the Signal 10 minutes later
+## 4. Clearing the fault resolves the Signal 10 minutes later, and the Incident with it
 
 ```sh
 make clear
 T1=$(date -u +%FT%TZ)
-sleep 630; signals "$T1" | grep detector:CrashLoopBackOff
-# expect firing re-sends until about 10 minutes after the last crash, then one
-#   signal.received  sensor  detector:CrashLoopBackOff/ic-target/demo/Deployment/orders  resolved
-# followed by triage.decision drop, "resolved Signals are not handled yet" (until #45), and no further re-sends
+sleep 630; signals "$T1"
+# expect, in time order, on the same Incident:
+#   signal.received  alertmanager  ic-target-alertmanager/<fp>   resolved   (each alert, within a couple of minutes)
+#   triage.decision                ic-target-alertmanager/<fp>   end
+#   ticket.commented               ic-target-alertmanager/<fp>   end
+#   firing re-sends of the Detector Signal, each a repeat, until about 10 minutes after the last crash, then
+#   signal.received  sensor        detector:CrashLoopBackOff/ic-target/demo/Deployment/orders  resolved
+#   triage.decision                detector:CrashLoopBackOff/ic-target/demo/Deployment/orders  resolve  resolved
+#   ticket.commented               detector:CrashLoopBackOff/ic-target/demo/Deployment/orders  resolve
+#   ticket.retitled                <ref>
+# and no further re-sends
 ```
+
+The Detector Signal is the last member to end, so its resolution resolves the Incident with outcome *resolved*. The ticket gets a `Signal resolved:` comment per alert, then `` Signal resolved: `CrashLoopBackOff` · critical · … · from sensor/ic-target `` followed by **Resolved.** Every Signal has ended; outcome: **resolved**. The title loses its severity, and the ticket stays open.
 
 ## 5. A pod with no owner is its own Target; other namespaces are not watched
 
@@ -108,6 +117,9 @@ sleep 300; signals "$T2"
 # expect one sensor Signal detector:CrashLoopBackOff/ic-target/demo/Pod/crasher, opening its own
 # Incident and ticket; nothing for the pod in default, which is outside IC_SENSOR_NAMESPACES
 demo delete pod crasher; kubectl --context kind-ic-target -n default delete pod crasher
+sleep 630; signals "$T2" | tail -4
+# expect the resolved Signal for Pod/crasher about 10 minutes after the delete, then triage.decision
+# resolve with outcome resolved, ticket.commented and ticket.retitled on the crasher's Incident
 ```
 
 ## 6. A Detector Signal naming another Location is rejected
