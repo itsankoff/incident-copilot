@@ -52,11 +52,11 @@ func TestString(t *testing.T) {
 		{"password in a URL", "dial postgres://orders:hunter2@db.demo:5432/orders failed", "dial postgres://orders:[REDACTED]@db.demo:5432/orders failed"},
 		{"Slack bot token, from the vendored rules", "--slack=" + slackBot, "--slack=[REDACTED]"},
 		{"vendored secret holding a placeholder word", "--slack=" + slackBot + "False", "--slack=[REDACTED]"},
-		{"password in a URL with an empty user", "dial tcp: redis://:Rk9pX2s3cretPa55@redis.demo:6379/0: connection refused", "dial tcp: redis://:[REDACTED]@redis.demo:6379/0: connection refused"},
+		{"password in a URL with an empty user", "dial tcp: redis://:" + redisPass + "@redis.demo:6379/0: connection refused", "dial tcp: redis://:[REDACTED]@redis.demo:6379/0: connection refused"},
 		{"already redacted stays the same", "password=[REDACTED] Bearer [REDACTED]", "password=[REDACTED] Bearer [REDACTED]"},
-		{"basic auth header", "unexpected status from HEAD request, Authorization: Basic dXNlcjpodW50ZXIyMDI2IQ== (401)",
+		{"basic auth header", "unexpected status from HEAD request, Authorization: Basic " + basicAuth + " (401)",
 			"unexpected status from HEAD request, Authorization: Basic [REDACTED] (401)"},
-		{"basic auth header in JSON text", `{"Proxy-Authorization":"Basic b3JkZXJzOmh1bnRlcjI="}`, `{"Proxy-Authorization":"Basic [REDACTED]"}`},
+		{"basic auth header in JSON text", `{"Proxy-Authorization":"Basic ` + "b3JkZXJz" + "Omh1bnRlcjI=" + `"}`, `{"Proxy-Authorization":"Basic [REDACTED]"}`},
 
 		// Near-misses: text that looks close but holds no secret.
 		{"prose about bearer tokens", "Bearer tokens are sent in a header", "Bearer tokens are sent in a header"},
@@ -136,7 +136,7 @@ func TestJSONReplacesValuesUnderSensitiveNames(t *testing.T) {
 }
 
 func TestJSONReplacesDockerConfigAuth(t *testing.T) {
-	in := json.RawMessage(`{"auths":{"registry.demo":{"auth":"b3JkZXJzOmdocF9GYWtlRmFrZUZha2U=","username":"orders"}},"author":"dev","oauth_url":"https://idp.demo/authorize","proxy":{"auth":"enabled"}}`)
+	in := json.RawMessage(`{"auths":{"registry.demo":{"auth":"` + dockerAuth + `","username":"orders"}},"author":"dev","oauth_url":"https://idp.demo/authorize","proxy":{"auth":"enabled"}}`)
 	want := `{"author":"dev","auths":{"registry.demo":{"auth":"[REDACTED]","username":"orders"}},"oauth_url":"https://idp.demo/authorize","proxy":{"auth":"enabled"}}`
 	if out := string(JSON(in)); out != want {
 		t.Errorf("JSON(%s)\n got %s\nwant %s", in, out, want)

@@ -45,6 +45,7 @@ var vendoredDeny = []string{
 	`014df517-39d1-4453-b7b3-9930c563627c`,
 }
 
+// vendoredRules holds betterleaks' rules, minus the ones the generator skips.
 var vendoredRules = []vendoredRule{
 	{id: "1password-secret-key", re: `\bA3-[A-Z0-9]{6}-(?:(?:[A-Z0-9]{11})|(?:[A-Z0-9]{6}-[A-Z0-9]{5}))-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}\b`, group: 0, keywords: []string{`a3-`}, minEntropy: 3.8, minInclusive: false, deny: nil},
 	{id: "1password-service-account-token", re: `ops_eyJ[a-zA-Z0-9+/]{250,}={0,3}`, group: 0, keywords: []string{`ops_eyj`}, minEntropy: 4, minInclusive: false, deny: nil},

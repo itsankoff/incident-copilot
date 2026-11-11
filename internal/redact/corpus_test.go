@@ -41,7 +41,7 @@ var corpus = []struct {
 	// outOfScope marks a secret no rule catches yet: an opaque token with no
 	// key name, or a bare password. Context rules for them come later.
 	outOfScope bool
-	want       string // a near-miss's output, when it is not in
+	want       string // the expected output of a near-miss our key-name rule already over-redacts; empty means unchanged
 }{
 	{name: "AWS key id and secret in env text", in: "AWS_ACCESS_KEY_ID=" + awsKeyID + " AWS_SECRET_ACCESS_KEY=" + awsSecret, secrets: []string{awsKeyID, awsSecret}},
 	{name: "GitHub token in a CI log", in: "2026-11-11T10:00:00Z git clone https://x-access-token:" + ghp + "@github.com/org/repo.git", secrets: []string{ghp}},

@@ -105,13 +105,13 @@ func readModule(zipPath, version string) (cfg, licence []byte, err error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	defer z.Close()
+	defer func() { _ = z.Close() }()
 	read := func(name string) ([]byte, error) {
 		f, err := z.Open(module + "@" + version + "/" + name)
 		if err != nil {
 			return nil, err
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		return io.ReadAll(f)
 	}
 	if cfg, err = read("config/betterleaks.toml"); err != nil {
@@ -173,6 +173,7 @@ func generate(cfgTOML, licence []byte, version, commit string) ([]byte, error) {
 	fmt.Fprintf(&w, "\npackage redact\n\n")
 	fmt.Fprintf(&w, "// vendoredDeny holds betterleaks' global filter: a secret matching one is a placeholder.\n")
 	fmt.Fprintf(&w, "var vendoredDeny = %s\n\n", list(global.deny, true))
+	fmt.Fprintf(&w, "// vendoredRules holds betterleaks' rules, minus the ones the generator skips.\n")
 	fmt.Fprintf(&w, "var vendoredRules = []vendoredRule{\n")
 	n := 0
 	for _, r := range cfg.Rules {
@@ -181,7 +182,9 @@ func generate(cfgTOML, licence []byte, version, commit string) ([]byte, error) {
 			st["skipped: generic (our key-name rule covers them)"]++
 			continue
 		case r.SkipReport:
-			st["skipped: skipReport (identifies a service, not a secret)"]++
+			// Components of composite rules, mostly identifiers. Including them
+			// over-redacts; the few that bear a secret are a gap for a later iteration.
+			st["skipped: skipReport (component of a composite rule, mostly identifiers)"]++
 			continue
 		case r.Regex == "":
 			st["skipped: no regex (matches file paths only)"]++
@@ -194,11 +197,11 @@ func generate(cfgTOML, licence []byte, version, commit string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		f, ok, err := translate(r.Filter, st)
+		f, lossless, err := translate(r.Filter, st)
 		if err != nil {
 			return nil, fmt.Errorf("rule %s: %v", r.ID, err)
 		}
-		if !ok {
+		if !lossless {
 			lossy = append(lossy, r.ID)
 		}
 		for _, p := range append([]string{re}, f.deny...) {
@@ -258,18 +261,23 @@ var (
 // translate keeps the parts of a filter expression the table understands:
 // entropy thresholds and deny lists on the secret. It drops the rest, such
 // as tokenRatio, and reports whether it dropped any part other than
-// tokenRatio. A dropped part only ever makes the table redact more.
-func translate(expr string, st stats) (f filter, ok bool, err error) {
-	ok = true
+// tokenRatio (lossless). A dropped part only ever makes the table redact more.
+func translate(expr string, st stats) (f filter, lossless bool, err error) {
+	lossless = true
 	for _, p := range orParts(expr) {
 		if m := entropyRe.FindStringSubmatch(p); m != nil {
-			f.minEntropy, _ = strconv.ParseFloat(m[2], 64)
+			if f.minEntropy, err = strconv.ParseFloat(m[2], 64); err != nil {
+				return f, false, err
+			}
 			f.minInclusive = m[1] == "<"
 			st["filter kept: entropy"]++
 			continue
 		}
 		var lits []string
 		switch m, c := matchesAnyRe.FindStringSubmatch(p), containsAnyRe.FindStringSubmatch(p); {
+		case hasAnd(p):
+			st["filter dropped: && expression"]++
+			lossless = false
 		case m != nil:
 			lits, err = literals(m[1], false)
 			st["filter kept: matchesAny"]++
@@ -280,14 +288,14 @@ func translate(expr string, st stats) (f filter, ok bool, err error) {
 			st["filter dropped: tokenRatio"]++
 		default:
 			st["filter dropped: other expression"]++
-			ok = false
+			lossless = false
 		}
 		if err != nil {
-			return f, ok, err
+			return f, lossless, err
 		}
 		f.deny = append(f.deny, lits...)
 	}
-	return f, ok, nil
+	return f, lossless, nil
 }
 
 // orParts splits expr on its top-level "||", unwrapping parentheses that
@@ -327,6 +335,17 @@ func orParts(expr string) []string {
 		all = append(all, orParts(p)...)
 	}
 	return all
+}
+
+// hasAnd reports whether expr holds "&&" outside string literals.
+func hasAnd(expr string) bool {
+	found := false
+	scan(expr, func(i int, c byte) {
+		if c == '&' && i+1 < len(expr) && expr[i+1] == '&' {
+			found = true
+		}
+	})
+	return found
 }
 
 // scan calls f for each byte of expr outside string literals.

@@ -71,7 +71,7 @@ jq -c '.data.spec.template.spec.containers[0] | {command, env}' "$RUN/state.json
 curl -s -XPOST localhost:8081/debug/evidence -d '{"tool":"events","target":'"$T"'}' > "$RUN/events.json"
 jq -r '.data[] | select(.reason == "UpstreamAuthFailed") | .message' "$RUN/events.json"
 # expect: pull failed, Authorization: Basic [REDACTED]; cache redis://:[REDACTED]@redis.demo:6379/0 refused; openai: 401 Incorrect API key provided: [REDACTED].
-for s in "$SLACK" "$STRIPE" "$BASIC" "$REDIS" "$OPENAI"; do cat "$RUN"/*.json | grep -c -- "$s"; done
+for s in "$SLACK" "$STRIPE" "$BASIC" "$REDIS" "$OPENAI"; do cat "$RUN"/*.json | grep -cF -- "$s"; done
 # expect 0 on every line
 ```
 
@@ -81,8 +81,8 @@ The demo's own workloads hold no secret, so the rules should leave them as they 
 
 ```sh
 O='{"platform":"kubernetes","location":"ic-target","namespace":"demo","kind":"Deployment","name":"orders"}'
-curl -s -XPOST localhost:8081/debug/evidence -d '{"tool":"workload_state","target":'"$O"'}' | grep -o '.\{60\}\[REDACTED\].\{20\}'
-curl -s -XPOST localhost:8081/debug/evidence -d '{"tool":"events","target":'"$O"'}' | grep -o '.\{60\}\[REDACTED\].\{20\}'
+curl -s -XPOST localhost:8081/debug/evidence -d '{"tool":"workload_state","target":'"$O"'}' | grep -o '.\{0,60\}\[REDACTED\].\{0,20\}'
+curl -s -XPOST localhost:8081/debug/evidence -d '{"tool":"events","target":'"$O"'}' | grep -o '.\{0,60\}\[REDACTED\].\{0,20\}'
 # expect no output; anything printed is a false positive to report, with the line around it
 kill %1   # the port-forward
 ```
@@ -97,4 +97,4 @@ rm -rf "$RUN"
 
 ## Last run
 
-Not yet run live on the demo clusters. Steps 1 and the expected outputs of step 3 were checked against the redactor in unit form; the deploy and the Evidence query path were not.
+Not yet run live on the demo clusters. Step 1 and the expected outputs of step 3 were checked against the redactor in unit form; the deploy and the Evidence query path were not.
