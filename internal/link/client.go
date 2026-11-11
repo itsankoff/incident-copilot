@@ -12,6 +12,7 @@ import (
 
 	"github.com/itsankoff/incident-copilot/internal/action"
 	"github.com/itsankoff/incident-copilot/internal/evidence"
+	"github.com/itsankoff/incident-copilot/internal/signal"
 )
 
 // Client is a Sensor's or an Executor's end of its link.
@@ -91,6 +92,23 @@ func (c *Client) Reply(ctx context.Context, id string, a evidence.Answer) error 
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("reply: status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// Send sends one Detector Signal.
+func (c *Client) Send(ctx context.Context, s signal.Signal) error {
+	body, err := json.Marshal(s)
+	if err != nil {
+		return err
+	}
+	resp, err := c.do(ctx, http.MethodPost, "/signals", body)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("signal: status %d", resp.StatusCode)
 	}
 	return nil
 }

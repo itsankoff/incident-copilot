@@ -114,6 +114,7 @@ func runControlPlane(ctx context.Context, logger *slog.Logger) error {
 		logger.Warn("OPENROUTER_API_KEY unset: Incidents get tickets but are not investigated")
 	}
 	cp := controlplane.New(alertmanager.New([]signal.Source{cfg.Alertmanager}), st, tickets, log, logger, time.Now, inv)
+	hub.Signals = cp.SensorSignal
 	// Deferred after the store and audit log, so it runs before they close: an
 	// investigation in flight finishes (within its time budget, unless the pod
 	// is killed first), though its Evidence queries fail once the hub stops.
@@ -177,12 +178,12 @@ func runSensor(ctx context.Context, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	tools, err := kubernetes.InCluster()
+	tools, detectors, err := kubernetes.InCluster(cfg.Location, cfg.Namespaces)
 	if err != nil {
 		return err
 	}
-	logger.Info("sensor dialing", "location", cfg.Location, "controlPlane", cfg.ControlPlaneURL)
-	sensor.New(link.NewClient(cfg.ControlPlaneURL, cfg.Location, cfg.Token), tools, logger).Run(ctx)
+	logger.Info("sensor dialing", "location", cfg.Location, "controlPlane", cfg.ControlPlaneURL, "namespaces", cfg.Namespaces)
+	sensor.New(link.NewClient(cfg.ControlPlaneURL, cfg.Location, cfg.Token), tools, detectors, logger).Run(ctx)
 	return nil
 }
 

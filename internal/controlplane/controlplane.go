@@ -8,6 +8,7 @@ package controlplane
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -134,17 +135,8 @@ func (s *Server) intake(a signal.Adapter) http.HandlerFunc {
 		}
 		ref := src.Ref()
 
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
-		if errors.As(err, new(*http.MaxBytesError)) {
-			if err := s.audit.Append(now, "request.rejected", 0, map[string]any{"source": ref, "reason": "body over 1 MiB"}); err != nil {
-				http.Error(w, "audit", http.StatusInternalServerError)
-				return
-			}
-			http.Error(w, "body over 1 MiB", http.StatusRequestEntityTooLarge)
-			return
-		}
-		if err != nil {
-			http.Error(w, "read body", http.StatusBadRequest)
+		body, ok := s.readBody(w, r, ref, now)
+		if !ok {
 			return
 		}
 		alerts, truncated, err := a.Split(body)
@@ -181,6 +173,63 @@ func (s *Server) intake(a signal.Adapter) http.HandlerFunc {
 			}
 		}
 	}
+}
+
+// SensorSignal takes in one Detector Signal from location's Sensor, which the
+// link has authenticated. The Signal is accepted only if its Target is in that
+// Location (ADR 0003 D5); the Control plane sets its source, key, and
+// receivedAt.
+func (s *Server) SensorSignal(w http.ResponseWriter, r *http.Request, location string) {
+	now := s.now()
+	ref := signal.SourceRef{Kind: "sensor", Instance: location}
+	body, ok := s.readBody(w, r, ref, now)
+	if !ok {
+		return
+	}
+	var sig signal.Signal
+	if err := json.Unmarshal(body, &sig); err != nil {
+		if err := s.audit.Append(now, "request.rejected", 0, map[string]any{"source": ref, "reason": err.Error()}); err != nil {
+			http.Error(w, "audit", http.StatusInternalServerError)
+			return
+		}
+		http.Error(w, "unparseable body", http.StatusBadRequest)
+		return
+	}
+	if sig.Target == nil || sig.Target.Location != location {
+		const reason = "Target in another Location than the Sensor's"
+		if err := s.audit.Append(now, "signal.rejected", 0, map[string]any{"source": ref, "reason": reason, "key": sig.Key, "name": sig.Name, "target": sig.Target}); err != nil {
+			http.Error(w, "audit", http.StatusInternalServerError)
+			return
+		}
+		http.Error(w, reason, http.StatusForbidden)
+		return
+	}
+	sig.Source, sig.ReceivedAt, sig.Raw = ref, now, body
+	sig.Key = signal.DetectorKey(sig.Name, *sig.Target)
+	if err := s.ingest(r.Context(), signal.Bound(sig), now); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// readBody reads a Signal source's request body of at most 1 MiB. On failure
+// it has answered the request, and audited a body over the bound.
+func (s *Server) readBody(w http.ResponseWriter, r *http.Request, ref signal.SourceRef, now time.Time) ([]byte, bool) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
+	if errors.As(err, new(*http.MaxBytesError)) {
+		if err := s.audit.Append(now, "request.rejected", 0, map[string]any{"source": ref, "reason": "body over 1 MiB"}); err != nil {
+			http.Error(w, "audit", http.StatusInternalServerError)
+			return nil, false
+		}
+		http.Error(w, "body over 1 MiB", http.StatusRequestEntityTooLarge)
+		return nil, false
+	}
+	if err != nil {
+		http.Error(w, "read body", http.StatusBadRequest)
+		return nil, false
+	}
+	return body, true
 }
 
 // ingest triages one Signal, stores the result, and brings its ticket up to date.
