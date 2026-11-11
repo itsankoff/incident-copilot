@@ -205,12 +205,13 @@ Done:
 - [x] Redaction and untrusted-data framing for every LLM call ([#49](https://github.com/itsankoff/incident-copilot/issues/49))
 - [x] L1 Advice in the ticket, checked by Gate 1 and capped by Decide and the kill switch, with an Executor that advertises its Actions ([#56](https://github.com/itsankoff/incident-copilot/issues/56))
 - [x] Local demo ticketing and readable Incident milestone logs ([#89](https://github.com/itsankoff/incident-copilot/issues/89))
+- [x] The CrashLoopBackOff Detector in the Sensor ([#54](https://github.com/itsankoff/incident-copilot/issues/54))
 - [x] One-command local demo, `make demo` ([#90](https://github.com/itsankoff/incident-copilot/issues/90), PR [#82](https://github.com/itsankoff/incident-copilot/pull/82))
 - [x] ADRs on the autonomy and trust model, and on product scope and platform seams
 
 In progress:
 
-- [ ] The CrashLoopBackOff Detector ([#54](https://github.com/itsankoff/incident-copilot/issues/54), PR [#86](https://github.com/itsankoff/incident-copilot/pull/86))
+- [ ] SQL migrations for the Control plane store ([#94](https://github.com/itsankoff/incident-copilot/issues/94), PR [#102](https://github.com/itsankoff/incident-copilot/pull/102))
 
 Planned:
 
