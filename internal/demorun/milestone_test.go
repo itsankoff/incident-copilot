@@ -30,7 +30,7 @@ func TestMilestoneRendersEachContractLine(t *testing.T) {
 			"Ticket 46 commented: signal (github ticketing)",
 		},
 		{
-			`{"time":"2026-11-11T10:00:02Z","level":"INFO","msg":"investigation.started","incident":3,"model":"openrouter/free","budget":{"Steps":8,"Tokens":100000,"Time":300000000000}}`,
+			`{"time":"2026-11-11T10:00:02Z","level":"INFO","msg":"investigation.started","incident":3,"model":"openrouter/free","budget":{"steps":8,"tokens":100000,"time":"5m0s"}}`,
 			"Investigation started with openrouter/free (budget: 8 steps, 100000 tokens, 5m0s)",
 		},
 		{
@@ -58,8 +58,8 @@ func TestMilestoneRendersEachContractLine(t *testing.T) {
 			"step 4: LLM request failed",
 		},
 		{
-			`{"time":"2026-11-11T10:05:02Z","level":"INFO","msg":"investigation.exhausted","incident":3,"reason":"time budget"}`,
-			"Investigation ran out of budget (time budget)",
+			`{"time":"2026-11-11T10:05:02Z","level":"INFO","msg":"investigation.exhausted","incident":3,"confidence":"low","steps":8,"duration":"4m58.1s","budget":"steps"}`,
+			"Investigation ran out of its steps budget: confidence low after 8 steps in 4m58.1s",
 		},
 		{
 			`{"time":"2026-11-11T10:00:41Z","level":"INFO","msg":"rca.posted","incident":3,"ref":"7"}`,

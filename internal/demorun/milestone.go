@@ -82,7 +82,7 @@ func (m Milestone) String() string {
 	case "investigation.finished":
 		return fmt.Sprintf("Investigation finished: confidence %s after %s steps in %s", m.Str("confidence"), m.Str("steps"), m.duration("duration"))
 	case "investigation.exhausted":
-		return fmt.Sprintf("Investigation ran out of budget (%s)", m.Str("reason"))
+		return fmt.Sprintf("Investigation ran out of its %s budget: confidence %s after %s steps in %s", m.Str("budget"), m.Str("confidence"), m.Str("steps"), m.duration("duration"))
 	case "rca.posted":
 		return "RCA written to ticket " + m.Str("ref")
 	case "ticket.ready":
@@ -112,14 +112,15 @@ func (m Milestone) step() string {
 	return prefix + "LLM " + verdict("answered", "request failed")
 }
 
-// budget renders the Control plane's Budget, which slog writes as an object.
+// budget renders the investigation's budget, which the Control plane logs
+// as a group.
 func (m Milestone) budget() string {
 	b, ok := m.Fields["budget"].(map[string]any)
 	if !ok {
 		return m.Str("budget")
 	}
 	sub := Milestone{Fields: b}
-	return fmt.Sprintf("%s steps, %s tokens, %s", sub.Str("Steps"), sub.Str("Tokens"), sub.duration("Time"))
+	return fmt.Sprintf("%s steps, %s tokens, %s", sub.Str("steps"), sub.Str("tokens"), sub.duration("time"))
 }
 
 // duration renders a duration that slog writes as nanoseconds, or as text.
