@@ -96,15 +96,17 @@ alertmanager:
       group_interval: 1m
       repeat_interval: 5m
       routes:
+        # First, because InfoInhibitor carries the namespace of the alerts it
+        # covers, so it can match the namespace route below.
+        - receiver: "null"
+          matchers: ['alertname =~ "Watchdog|InfoInhibitor|Prometheus.*|Alertmanager.*|ConfigReloaderSidecarErrors|KubeStateMetrics.*"']
         - receiver: incident-copilot
           matchers: ['namespace =~ "demo|kube-system"']
         # Kubernetes core: API server, kubelet, nodes, node-exporter, etcd,
         # resources and storage. Matched by name, because a cluster-scoped
         # alert carries kube-state-metrics' namespace, "monitoring".
         - receiver: incident-copilot
-          matchers:
-            - 'alertname =~ "Kube.*|Node.*|etcd.*"'
-            - 'alertname !~ "KubeStateMetrics.*"'
+          matchers: ['alertname =~ "Kube.*|Node.*|etcd.*"']
     receivers:
       - name: "null"
       - name: incident-copilot
