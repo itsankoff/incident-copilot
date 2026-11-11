@@ -164,12 +164,12 @@ func (t *Tickets) Handler() http.Handler {
 
 // ticket and comment hold the text as stored, in markdown.
 type ticket struct {
-	Ref      string
-	Title    string
-	Created  string
-	Body     string
-	Comments []comment
-	Count    int // comments, in the list
+	Ref          string
+	Title        string
+	Created      string
+	Body         string
+	Comments     []comment
+	CommentCount int // in the list only
 }
 
 type comment struct {
@@ -187,7 +187,7 @@ func (t *Tickets) list(ctx context.Context) ([]ticket, error) {
 	var out []ticket
 	for rows.Next() {
 		var tk ticket
-		if err := rows.Scan(&tk.Ref, &tk.Title, &tk.Created, &tk.Count); err != nil {
+		if err := rows.Scan(&tk.Ref, &tk.Title, &tk.Created, &tk.CommentCount); err != nil {
 			return nil, err
 		}
 		out = append(out, tk)
@@ -271,7 +271,7 @@ code { background: #eff1f3; border-radius: 4px; padding: 0 .25rem; }
 <table>
 <tr><th>#</th><th>Title</th><th>Opened</th><th>Comments</th></tr>
 {{- range .List}}
-<tr><td>{{.Ref}}</td><td><a href="/tickets/{{.Ref}}">{{.Title}}</a></td><td>{{.Created}}</td><td>{{.Count}}</td></tr>
+<tr><td>{{.Ref}}</td><td><a href="/tickets/{{.Ref}}">{{.Title}}</a></td><td>{{.Created}}</td><td>{{.CommentCount}}</td></tr>
 {{- end}}
 </table>
 {{- else}}
