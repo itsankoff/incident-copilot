@@ -53,7 +53,7 @@ func TestDetectorSignalForAnotherLocationIsRejected(t *testing.T) {
 	if len(h.tickets.created) != 0 {
 		t.Fatalf("%d tickets, want 0", len(h.tickets.created))
 	}
-	open, err := h.store.OpenIncidents(context.Background())
+	open, err := h.store.Incidents(context.Background())
 	if err != nil || len(open) != 0 {
 		t.Fatalf("open Incidents %v (err %v), want none", open, err)
 	}
@@ -92,7 +92,7 @@ func TestAlertAndDetectorSignalOnOneDeploymentAreOneIncident(t *testing.T) {
 			if title := h.tickets.created[0].title; !strings.Contains(title, "prod/demo/Deployment/orders") {
 				t.Errorf("title %q does not name the Deployment", title)
 			}
-			open, err := h.store.OpenIncidents(context.Background())
+			open, err := h.store.Incidents(context.Background())
 			if err != nil || len(open) != 1 || len(open[0].Members) != 2 {
 				t.Fatalf("open Incidents %+v (err %v), want one with two members", open, err)
 			}
