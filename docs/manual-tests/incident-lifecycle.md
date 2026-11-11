@@ -174,3 +174,19 @@ rm -rf "$RUN"
 ```
 
 Close the issues the run created, or keep them as a record.
+
+## Last run
+
+2026-11-10, 23:52 to 00:08 UTC, on the long-lived demo clusters, after the state reset in step 1. Build `78f1976` (the lifecycle and its review fixes, before this document), with real GitHub tickets and OpenRouter. The pipeline that validated the PR drove none of these scenarios live. They come from this manual session only.
+
+| Step | Result |
+|---|---|
+| 2 | Pass. The `LcWarn` issue opened as `[warning]`, was retitled `[critical]` when `LcCrit` joined, and back to `[warning]` when `LcCrit` resolved. When `LcWarn` resolved, the Incident resolved with outcome resolved, the title lost its severity, and the issue stayed open. No annotation leaked. |
+| 3 | Pass. The same Incident and issue reopened, with a `Reopened` comment and `[warning]` again. No new issue. |
+| 4 | Pass. The silenced `LcWarn` expired at the Sweep 10 m 25 s after its last firing notice, with outcome expired. |
+| 5 | Pass, both orders. Closed while the LLM was answering: the Sweep closed the Incident, the LLM call was cancelled, and `investigation.cancelled` said `incident 4 closed: the ticket was closed by a human (ticket 57, completed)`. Closed just before the investigation finished: `investigation.cancelled` said `… before the RCA was posted`. Neither issue got an RCA. |
+| 6 | Pass. The recurrence issue's body started `**Recurrence of:** Incident 2, ticket #55`. The pod-only Incident was keyed by its Signal, skipped its investigation, and resolved. |
+| 7 | Not run. Unit tests only. |
+| 8 | Pass. The Control plane started on the copied audit log. |
+
+A ticket closed while its alert still fired got a recurrence on the alert's next repeat notice, within 5 minutes. The issue asks for exactly this ("A Signal after close opens a new Incident"), and it is noted on the PR as a product question.
