@@ -164,7 +164,7 @@ make cluster         # or `make observability` if the clusters already exist
 make control-plane
 ```
 
-`make cluster` creates the `incident-copilot-webhook` Secret in `ic-target`'s `monitoring` namespace, holding the token `demo-alertmanager-token`, and installs Alertmanager with the shipped route. `make control-plane` deploys the Control plane into `ic-control-plane` with the same token and the GitHub settings from `.env.demo`. Check that the route is loaded:
+`make cluster` creates the `incident-copilot-webhook` Secret in `ic-target`'s `monitoring` namespace, holding the token `demo-alertmanager-token`, and installs Alertmanager with the shipped route's timers and receiver, behind the demo's filter ([demo-environment.md](../design/demo-environment.md)). `make control-plane` deploys the Control plane into `ic-control-plane` with the same token and the GitHub settings from `.env.demo`. Check that the route is loaded:
 
 ```sh
 am() { kubectl --context kind-ic-target -n monitoring exec alertmanager-kps-alertmanager-0 -c alertmanager -- "$@"; }
