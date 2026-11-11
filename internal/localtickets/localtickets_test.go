@@ -3,6 +3,7 @@ package localtickets
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -15,7 +16,7 @@ var t0 = time.Date(2026, 11, 11, 9, 30, 0, 0, time.UTC)
 
 func open(t *testing.T, path string) *Tickets {
 	t.Helper()
-	tk, err := Open(path, func() time.Time { return t0 })
+	tk, err := Open(context.Background(), path, func() time.Time { return t0 }, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +123,7 @@ func TestATicketIsServedAsMarkdown(t *testing.T) {
 func TestTicketsSurviveARestart(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "tickets.db")
-	first, err := Open(path, func() time.Time { return t0 })
+	first, err := Open(context.Background(), path, func() time.Time { return t0 }, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

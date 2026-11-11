@@ -79,6 +79,38 @@ tools: ## Check that required tools are installed
 	fi; \
 	echo "tools ok (go $$gv, kind $$kv, helm $$(helm version --short))"
 
+##@ Migrations
+
+# The database make migration and make migrate work on: state (the store) or
+# tickets (the demo's local tickets); its local file; and the branch whose
+# migrations count as merged.
+SCHEMA ?= state
+DB     ?= build/dev/$(SCHEMA).db
+BASE   ?= origin/master
+
+.PHONY: migration
+migration: ## Write the next numbered migration (NAME=add_thing, KIND=go for a Go data migration, SCHEMA=state|tickets)
+	@[ -n "$(NAME)" ] || { echo "usage: make migration NAME=<snake_name> [KIND=sql|go] [SCHEMA=state|tickets]"; exit 1; }
+	go run ./cmd/migrate -schema $(SCHEMA) create $(NAME) $(KIND)
+
+.PHONY: migrate
+migrate: ## Run a migration command on a local file (CMD=status|up|down|redo, SCHEMA=state|tickets, DB=build/dev/<schema>.db)
+	go run ./cmd/migrate -schema $(SCHEMA) -db $(DB) $(or $(CMD),status)
+
+.PHONY: check-migrations
+check-migrations: ## Fail if a migration merged on BASE (origin/master) was edited, renamed, or deleted
+	@changed=$$(git diff --name-status --find-renames --diff-filter=MDR $(BASE)...HEAD -- ':(glob)internal/**/migrations/[0-9]*'); \
+	[ -z "$$changed" ] || { echo "merged migrations never change; add a new migration instead:"; echo "$$changed"; exit 1; }; \
+	echo "merged migrations unchanged since $(BASE)"
+
+.PHONY: check-libc
+check-libc: ## Fail if go.mod's modernc.org/libc is not the version modernc.org/sqlite pins
+	@sqlite=$$(go list -m -f '{{.Path}}@{{.Version}}' modernc.org/sqlite); \
+	want=$$(go mod graph | awk -v s="$$sqlite" '$$1 == s && $$2 ~ /^modernc\.org\/libc@/ {print $$2}'); \
+	have=$$(go list -m -f '{{.Path}}@{{.Version}}' modernc.org/libc); \
+	[ -n "$$want" ] && [ "$$want" = "$$have" ] || { echo "go.mod has $$have, but $$sqlite pins $$want"; exit 1; }; \
+	echo "$$have matches $$sqlite"
+
 ##@ Demo environment
 
 .PHONY: cluster

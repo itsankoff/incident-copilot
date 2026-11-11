@@ -12,29 +12,17 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/yuin/goldmark"
-	_ "modernc.org/sqlite"
-)
 
-const schema = `
-CREATE TABLE IF NOT EXISTS tickets (
-	id         INTEGER PRIMARY KEY AUTOINCREMENT,
-	title      TEXT NOT NULL,
-	body       TEXT NOT NULL,
-	created_at TEXT NOT NULL,
-	closed_at  TEXT
-);
-CREATE TABLE IF NOT EXISTS comments (
-	id         INTEGER PRIMARY KEY AUTOINCREMENT,
-	ticket_id  INTEGER NOT NULL REFERENCES tickets(id),
-	body       TEXT NOT NULL,
-	created_at TEXT NOT NULL
-);`
+	"github.com/itsankoff/incident-copilot/internal/localtickets/migrations"
+	"github.com/itsankoff/incident-copilot/internal/migrate"
+)
 
 // Tickets is the local ticketing adapter. It keeps its own database, apart
 // from the Control plane's state: a ticket is written while the state's
@@ -44,14 +32,17 @@ type Tickets struct {
 	now func() time.Time
 }
 
-// Open opens or creates the tickets database at path.
-func Open(path string, now func() time.Time) (*Tickets, error) {
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
+// Migrations is the tickets database's schema history, which Open applies.
+var Migrations = migrate.Migrations{FS: migrations.FS}
+
+// Open opens or creates the tickets database at path and applies its
+// pending migrations, logging each one to log.
+func Open(ctx context.Context, path string, now func() time.Time, log *slog.Logger) (*Tickets, error) {
+	db, err := migrate.OpenDB(path)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
+	if err := migrate.Apply(ctx, db, Migrations, log.With("database", path)); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("tickets %s: %w", path, err)
 	}

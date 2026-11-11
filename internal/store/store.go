@@ -8,73 +8,33 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
+	"log/slog"
 	"time"
 
-	_ "modernc.org/sqlite"
-
+	"github.com/itsankoff/incident-copilot/internal/migrate"
 	"github.com/itsankoff/incident-copilot/internal/signal"
+	"github.com/itsankoff/incident-copilot/internal/store/migrations"
 	"github.com/itsankoff/incident-copilot/internal/triage"
 )
-
-const schema = `
-CREATE TABLE IF NOT EXISTS incidents (
-	id         INTEGER PRIMARY KEY AUTOINCREMENT,
-	target     TEXT,              -- JSON signal.Target, NULL when there is none
-	key        TEXT NOT NULL,     -- <source instance>/<Signal name> when there is no Target
-	opened_at  TEXT NOT NULL,
-	ticket_ref TEXT NOT NULL DEFAULT ''
-);
-CREATE TABLE IF NOT EXISTS members (
-	incident_id     INTEGER NOT NULL REFERENCES incidents(id),
-	key             TEXT NOT NULL,
-	starts_at       TEXT NOT NULL,
-	source_kind     TEXT NOT NULL,
-	source_instance TEXT NOT NULL,
-	name            TEXT NOT NULL,
-	severity        TEXT NOT NULL,
-	link            TEXT NOT NULL,
-	first_seen      TEXT NOT NULL,
-	last_seen       TEXT NOT NULL,
-	PRIMARY KEY (incident_id, key, starts_at)
-);
-CREATE TABLE IF NOT EXISTS settings (
-	name  TEXT PRIMARY KEY,
-	value TEXT NOT NULL
-);`
-
-// columns came after the first schema; adding them to a database that already
-// has them fails with "duplicate column name", which Open ignores.
-var columns = []string{
-	`ALTER TABLE incidents ADD COLUMN state TEXT NOT NULL DEFAULT 'open'`,
-	`ALTER TABLE incidents ADD COLUMN outcome TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE incidents ADD COLUMN open_since TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE incidents ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE incidents ADD COLUMN recurrence_of INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE members ADD COLUMN end_outcome TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE members ADD COLUMN ended_at TEXT NOT NULL DEFAULT ''`,
-}
 
 type Store struct {
 	db *sql.DB
 }
 
-// Open opens or creates the database at path.
-func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
+// Migrations is the store's schema history, which Open applies.
+var Migrations = migrate.Migrations{FS: migrations.FS, Go: migrations.Go}
+
+// Open opens or creates the database at path and applies its pending
+// migrations, logging each one to log. It fails with the migration's error
+// if one fails; that migration has then rolled back whole.
+func Open(ctx context.Context, path string, log *slog.Logger) (*Store, error) {
+	db, err := migrate.OpenDB(path)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
+	if err := migrate.Apply(ctx, db, Migrations, log.With("database", path)); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("store %s: %w", path, err)
-	}
-	for _, c := range columns {
-		if _, err := db.Exec(c); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-			_ = db.Close()
-			return nil, fmt.Errorf("store %s: %w", path, err)
-		}
 	}
 	return &Store{db: db}, nil
 }

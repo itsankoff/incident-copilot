@@ -1,0 +1,27 @@
+incidents column 0 id INTEGER notnull=0 default=NULL pk=1 hidden=0
+incidents column 1 target TEXT notnull=0 default=NULL pk=0 hidden=0
+incidents column 2 key TEXT notnull=1 default=NULL pk=0 hidden=0
+incidents column 3 opened_at TEXT notnull=1 default=NULL pk=0 hidden=0
+incidents column 4 ticket_ref TEXT notnull=1 default='' pk=0 hidden=0
+incidents column 5 state TEXT notnull=1 default='open' pk=0 hidden=0
+incidents column 6 outcome TEXT notnull=1 default='' pk=0 hidden=0
+incidents column 7 open_since TEXT notnull=1 default='' pk=0 hidden=0
+incidents column 8 updated_at TEXT notnull=1 default='' pk=0 hidden=0
+incidents column 9 recurrence_of INTEGER notnull=1 default=0 pk=0 hidden=0
+members column 0 incident_id INTEGER notnull=1 default=NULL pk=1 hidden=0
+members column 1 key TEXT notnull=1 default=NULL pk=2 hidden=0
+members column 2 starts_at TEXT notnull=1 default=NULL pk=3 hidden=0
+members column 3 source_kind TEXT notnull=1 default=NULL pk=0 hidden=0
+members column 4 source_instance TEXT notnull=1 default=NULL pk=0 hidden=0
+members column 5 name TEXT notnull=1 default=NULL pk=0 hidden=0
+members column 6 severity TEXT notnull=1 default=NULL pk=0 hidden=0
+members column 7 link TEXT notnull=1 default=NULL pk=0 hidden=0
+members column 8 first_seen TEXT notnull=1 default=NULL pk=0 hidden=0
+members column 9 last_seen TEXT notnull=1 default=NULL pk=0 hidden=0
+members column 10 end_outcome TEXT notnull=1 default='' pk=0 hidden=0
+members column 11 ended_at TEXT notnull=1 default='' pk=0 hidden=0
+settings column 0 name TEXT notnull=0 default=NULL pk=1 hidden=0
+settings column 1 value TEXT notnull=1 default=NULL pk=0 hidden=0
+members foreign_key 0 0 incident_id incidents id NO ACTION NO ACTION
+members index sqlite_autoindex_members_1 1 pk 0 incident_id,key,starts_at
+settings index sqlite_autoindex_settings_1 1 pk 0 name

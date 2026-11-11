@@ -138,7 +138,7 @@ The full topology, with namespaces and networking, is in [`docs/design/demo-envi
 
 | Tool | Version | Needed for |
 |---|---|---|
-| [Go](https://go.dev) | 1.25+ | Building, testing, and `make fault` |
+| [Go](https://go.dev) | 1.25.7+ | Building, testing, and `make fault` |
 | [Docker](https://docs.docker.com/get-docker/) | Any recent version, with 4 CPUs and 8 GB of memory allocated | Images and the kind nodes |
 | [kind](https://kind.sigs.k8s.io) | v0.31.0 | The two clusters (Kubernetes v1.35.0 nodes) |
 | [kubectl](https://kubernetes.io/docs/tasks/tools/) | Within one minor version of v1.35 (v1.34 to v1.36) | Every cluster target |
