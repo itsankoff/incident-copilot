@@ -156,14 +156,12 @@ func (v *Investigator) Run(ctx context.Context, inc triage.Incident) error {
 	}); err != nil {
 		return err
 	}
-	duration := v.now().Sub(start).Round(time.Millisecond).String()
+	msg, outcome := "investigation.finished", []any{"incident", inc.ID, "confidence", confidence(inv, failures),
+		"steps", inv.steps, "duration", v.now().Sub(start).Round(time.Millisecond).String()}
 	if inv.exhausted != "" {
-		v.logger.Info("investigation.exhausted", "incident", inc.ID, "budget", inv.exhausted,
-			"confidence", confidence(inv, failures), "steps", inv.steps, "duration", duration)
-	} else {
-		v.logger.Info("investigation.finished", "incident", inc.ID,
-			"confidence", confidence(inv, failures), "steps", inv.steps, "duration", duration)
+		msg, outcome = "investigation.exhausted", append(outcome, "budget", inv.exhausted)
 	}
+	v.logger.Info(msg, outcome...)
 	if err := v.tickets.Comment(ctx, inc.TicketRef, v.render(inv, failures)); err != nil {
 		return err
 	}

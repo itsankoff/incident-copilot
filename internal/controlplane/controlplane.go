@@ -150,7 +150,7 @@ func (s *Server) ingest(ctx context.Context, sig signal.Signal, now time.Time) e
 		if err := s.auditDecision(sig, decision, 0, now); err != nil {
 			return err
 		}
-		s.logSignal(sig, d.Kind, 0)
+		s.logSignal(ctx, sig, d.Kind, 0)
 		return nil
 	}
 
@@ -194,7 +194,7 @@ func (s *Server) ingest(ctx context.Context, sig signal.Signal, now time.Time) e
 		return err
 	}
 	// Logged once stored, so a Signal the source must re-send logs nothing.
-	s.logSignal(sig, d.Kind, inc.ID)
+	s.logSignal(ctx, sig, d.Kind, inc.ID)
 	switch d.Kind {
 	case triage.Open:
 		s.logger.Info("ticket.created", "incident", inc.ID, "adapter", s.tickets.Name(), "ref", inc.TicketRef, "kind", "incident")
@@ -226,7 +226,7 @@ func (s *Server) auditDecision(sig signal.Signal, decision map[string]any, incid
 // logSignal logs a Signal and its Triage decision with names only. A repeat
 // notice or a dropped Signal changes nothing a reader follows, so it logs at
 // debug level.
-func (s *Server) logSignal(sig signal.Signal, kind triage.Kind, incident int64) {
+func (s *Server) logSignal(ctx context.Context, sig signal.Signal, kind triage.Kind, incident int64) {
 	level := slog.LevelDebug
 	if kind == triage.Open || kind == triage.Join {
 		level = slog.LevelInfo
@@ -235,7 +235,6 @@ func (s *Server) logSignal(sig signal.Signal, kind triage.Kind, incident int64) 
 	if sig.Target != nil {
 		target = sig.Target.String()
 	}
-	ctx := context.Background()
 	s.logger.Log(ctx, level, "signal.received", "incident", incident, "source", sig.Source.Kind+"/"+sig.Source.Instance, "name", sig.Name, "target", target)
 	s.logger.Log(ctx, level, "triage.decision", "incident", incident, "decision", string(kind))
 }
