@@ -13,6 +13,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0 # check-migrations diffs against the base branch
 
       - uses: actions/setup-go@v5.5.0
         with:
@@ -26,3 +28,7 @@ jobs:
 
       # Unit tests only. The e2e suite (build tag e2e) needs a kind cluster.
       - run: make build test vet lint
+
+      # Merged migrations are never edited, renamed, or deleted, and the
+      # pure-Go SQLite driver runs on the libc it was built against.
+      - run: make check-migrations check-libc BASE=origin/${{ github.base_ref || github.event.repository.default_branch }}

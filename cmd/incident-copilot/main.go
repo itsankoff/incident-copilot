@@ -67,7 +67,7 @@ func runControlPlane(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 
-	st, err := store.Open(cfg.StatePath)
+	st, err := store.Open(cfg.StatePath, logger)
 	if err != nil {
 		return err
 	}

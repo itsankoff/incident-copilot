@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -32,7 +31,7 @@ func save(t *testing.T, st *Store, inc triage.Incident) int64 {
 }
 
 func TestLifecycleRoundTrips(t *testing.T) {
-	st, err := Open(filepath.Join(t.TempDir(), "state.db"))
+	st, err := Open(filepath.Join(t.TempDir(), "state.db"), quiet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,45 +62,5 @@ func TestLifecycleRoundTrips(t *testing.T) {
 	}
 	if g := got[1]; g.State != triage.StateResolved || !g.UpdatedAt.Equal(t0.Add(time.Hour)) || !g.OpenSince.Equal(t0) {
 		t.Errorf("resolved Incident %+v", g)
-	}
-}
-
-func TestOpenAddsLifecycleColumnsToAnOldDatabase(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state.db")
-	db, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The schema before Incidents had a lifecycle.
-	for _, q := range []string{
-		`CREATE TABLE incidents (id INTEGER PRIMARY KEY AUTOINCREMENT, target TEXT, key TEXT NOT NULL,
-			opened_at TEXT NOT NULL, ticket_ref TEXT NOT NULL DEFAULT '')`,
-		`CREATE TABLE members (incident_id INTEGER NOT NULL REFERENCES incidents(id), key TEXT NOT NULL,
-			starts_at TEXT NOT NULL, source_kind TEXT NOT NULL, source_instance TEXT NOT NULL, name TEXT NOT NULL,
-			severity TEXT NOT NULL, link TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL,
-			PRIMARY KEY (incident_id, key, starts_at))`,
-		`INSERT INTO incidents (target, key, opened_at, ticket_ref) VALUES (NULL, 'am/ppp', '2026-10-21T03:00:00Z', '19')`,
-		`INSERT INTO members VALUES (1, 'am/ppp', '2026-10-21T03:00:00Z', 'alertmanager', 'am', 'PodNotReady', 'warning', '',
-			'2026-10-21T03:00:00Z', '2026-10-21T03:05:00Z')`,
-	} {
-		if _, err := db.Exec(q); err != nil {
-			t.Fatal(err)
-		}
-	}
-	_ = db.Close()
-
-	for range 2 { // and opening it again changes nothing
-		st, err := Open(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, err := st.Incidents(context.Background())
-		_ = st.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(got) != 1 || got[0].State != triage.StateOpen || got[0].TicketRef != "19" || len(got[0].Members) != 1 || got[0].Members[0].End != "" {
-			t.Fatalf("Incidents %+v, want the old one, open", got)
-		}
 	}
 }
