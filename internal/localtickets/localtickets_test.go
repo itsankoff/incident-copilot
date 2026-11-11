@@ -87,6 +87,38 @@ func TestTicketsAndCommentsAreShownOnTheReadOnlyPage(t *testing.T) {
 	}
 }
 
+// The demo runner prints a ticket in the terminal from its markdown.
+func TestATicketIsServedAsMarkdown(t *testing.T) {
+	ctx := context.Background()
+	tk := open(t, filepath.Join(t.TempDir(), "tickets.db"))
+	ref, err := tk.Create(ctx, "KubePodCrashLooping on ic-target/demo/Deployment/orders", "**Target:** `orders`\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tk.Comment(ctx, ref, "Signal joined: `OrdersErrorRate`"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tk.Comment(ctx, ref, "## Root-cause analysis\n\n**Confidence:** high\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	tk.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/tickets/1.md", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "text/markdown; charset=utf-8" {
+		t.Fatalf("GET /tickets/1.md: %d %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	want := "# KubePodCrashLooping on ic-target/demo/Deployment/orders (#1)\n\n" +
+		"Opened 2026-11-11T09:30:00Z\n\n**Target:** `orders`\n\n" +
+		"---\n\nComment 2026-11-11T09:30:00Z\n\nSignal joined: `OrdersErrorRate`\n\n" +
+		"---\n\nComment 2026-11-11T09:30:00Z\n\n## Root-cause analysis\n\n**Confidence:** high\n"
+	if got := rec.Body.String(); got != want {
+		t.Errorf("markdown:\n%s\nwant:\n%s", got, want)
+	}
+	if code, _ := get(t, tk.Handler(), http.MethodGet, "/tickets/9.md"); code != http.StatusNotFound {
+		t.Errorf("GET /tickets/9.md: %d, want 404", code)
+	}
+}
+
 func TestTicketsSurviveARestart(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "tickets.db")

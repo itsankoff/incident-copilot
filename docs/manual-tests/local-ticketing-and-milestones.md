@@ -101,6 +101,9 @@ curl -s localhost:18080/tickets | grep -oE 'Demo only|LocalTicketCheck on [^<]*'
 # expect "Demo only" and "LocalTicketCheck on ic-target/demo/Deployment/loadgen"
 curl -s localhost:18080/tickets/1 | grep -oE '<h2>Root-cause analysis</h2>|Confidence:</strong> [a-z]+'
 # expect the RCA heading and its confidence
+curl -s localhost:18080/tickets/1.md | head -3
+# expect the ticket as stored, in markdown: "# LocalTicketCheck on ic-target/demo/Deployment/loadgen (#1)",
+# then its body and each comment, the RCA last
 curl -s -o /dev/null -w '%{http_code}\n' -XPOST localhost:18080/tickets/1   # expect 405: read-only
 curl -s localhost:18080/tickets/1 | grep -c MANUAL-TEST-ANNOTATION         # expect 0
 ```
