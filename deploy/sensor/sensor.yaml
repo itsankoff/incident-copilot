@@ -40,7 +40,7 @@ kind: ServiceAccount
 metadata:
   name: sensor
 ---
-# Read-only, cluster-wide for now: #52 narrows it and adds the namespace allowlist.
+# Read-only, cluster-wide for now: #52 narrows it to the namespace allowlist (IC_SENSOR_NAMESPACES).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
