@@ -109,7 +109,7 @@ func TestSecretsFromTheSensorReachNeitherTheLLMNorTheAuditLog(t *testing.T) {
 		"workload_state": {Data: json.RawMessage(`{"logs":[` + mustJSON(line) + `]}`)},
 		"events":         {Error: "list events: 403 for " + fakeGHToken + " at " + presignedURL},
 	}}
-	model := &recordingLLM{args: `{"note":"use ` + fakeGHToken + `"}`}
+	model := &recordingLLM{args: `{"note":"use ` + fakeGHToken + ` password=\"hunter3\""}`}
 	a := alert("KubePodCrashLooping", "aaa", orders)
 	a["generatorURL"] = "http://prometheus/graph?g0.expr=up&" + fakeSignatureParam
 	h := investigateWith(t, l, model, a)
@@ -118,6 +118,19 @@ func TestSecretsFromTheSensorReachNeitherTheLLMNorTheAuditLog(t *testing.T) {
 		for _, s := range secrets {
 			if strings.Contains(req, s) {
 				t.Errorf("LLM request %d holds %q", i+1, s)
+			}
+		}
+	}
+	// The arguments go back to the LLM, and some providers refuse ones that
+	// are not valid JSON.
+	var second llm.Request
+	if err := json.Unmarshal([]byte(model.reqs[1]), &second); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range second.Messages {
+		for _, tc := range m.ToolCalls {
+			if !json.Valid([]byte(tc.Arguments)) || strings.Contains(tc.Arguments, "hunter3") {
+				t.Errorf("tool call arguments = %s, want valid JSON without the password", tc.Arguments)
 			}
 		}
 	}

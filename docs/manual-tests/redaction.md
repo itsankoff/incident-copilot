@@ -85,6 +85,8 @@ jq -c '[.seq, .type, .incident, (.data.kind // .data.outcome // .data.ref // "")
 # If ticket.commented rca is missing, wait and save again.
 ```
 
+With `openrouter/free`, a step may be answered by a model that writes malformed tool-call arguments, and some providers then refuse the next request. The RCA comment then says **No RCA** and the audit log has an `llm.error`. The redaction checks below still hold. To see a full RCA, run the test again.
+
 ## 4. No secret reached the audit log
 
 ```sh
@@ -117,7 +119,7 @@ The model's tool results are recorded only as digests, so the frame itself is ch
 ```sh
 R=$(grep '^IC_GITHUB_REPO=' .env.demo | cut -d= -f2- | tr -d '"')
 REF=$(jq -r 'select(.type == "ticket.created") | .data.ref' "$RUN/audit.jsonl")
-gh issue view "$REF" -R "$R" --comments > "$RUN/ticket.txt"
+gh issue view "$REF" -R "$R" --json title,body,comments --jq '.title, .body, .comments[].body' > "$RUN/ticket.txt"
 for s in "$AWS" "$GH" "$PW" REDACTION-ANNOTATION-MARKER; do echo "$s $(grep -c -- "$s" "$RUN/ticket.txt")"; done
 # expect 0 on every line, and a "## Root-cause analysis" comment in the ticket
 grep -c -- "$SIG" "$RUN/ticket.txt"

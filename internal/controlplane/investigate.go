@@ -263,7 +263,9 @@ func redacted(msgs []llm.Message) []llm.Message {
 		out[i].Content = redact.String(out[i].Content)
 		out[i].ToolCalls = slices.Clone(out[i].ToolCalls)
 		for j := range out[i].ToolCalls {
-			out[i].ToolCalls[j].Arguments = redact.String(out[i].ToolCalls[j].Arguments)
+			// Arguments are JSON text, so they get the JSON pass, which keeps
+			// them valid: some providers refuse a request whose arguments are not.
+			out[i].ToolCalls[j].Arguments = string(redact.JSON(json.RawMessage(out[i].ToolCalls[j].Arguments)))
 		}
 	}
 	return out
