@@ -370,7 +370,7 @@ func TestPodOnlyAlertHasNoTarget(t *testing.T) {
 		t.Fatalf("%d tickets, want 1", len(h.tickets.created))
 	}
 	tk := h.tickets.created[0]
-	if tk.title != "KubePodNotReady from prod-am (no Target)" {
+	if tk.title != "[critical] KubePodNotReady from prod-am (no Target)" {
 		t.Errorf("title %q does not name the Signal and its source", tk.title)
 	}
 	if strings.Contains(tk.title+tk.body, "Deployment") {
