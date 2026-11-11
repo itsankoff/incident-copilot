@@ -33,7 +33,7 @@ func TestTriage(t *testing.T) {
 	ordersInc := Incident{ID: 1, Target: orders, OpenedAt: t0, Members: []Member{member(crash, t0)}, TicketRef: "41", State: StateOpen}
 
 	podOnly := sig("am/ppp", "PodNotReady", nil, t0)
-	podOnlyInc := Incident{ID: 2, Key: "am/ppp", OpenedAt: t0, Members: []Member{member(podOnly, t0)}, State: StateOpen}
+	podOnlyInc := Incident{ID: 2, Key: "am/PodNotReady", OpenedAt: t0, Members: []Member{member(podOnly, t0)}, State: StateOpen}
 
 	tests := []struct {
 		name    string
@@ -49,10 +49,16 @@ func TestTriage(t *testing.T) {
 		{"same key, new startsAt is a new episode and joins", []Incident{ordersInc}, sig("am/aaa", "KubePodCrashLooping", orders, t0.Add(time.Minute)), Join, 1, 2},
 		{"same key and startsAt is a repeat notice", []Incident{ordersInc}, crash, Repeat, 1, 1},
 		{"different Target opens a second Incident", []Incident{ordersInc}, sig("am/ccc", "KubePodCrashLooping", inventory, t0), Open, 0, 1},
-		{"no Target opens keyed by key", []Incident{ordersInc}, podOnly, Open, 0, 1},
-		{"no Target joins by key", []Incident{ordersInc, podOnlyInc}, sig("am/ppp", "PodNotReady", nil, t0.Add(time.Minute)), Join, 2, 2},
+		{"no Target opens keyed by source and name", []Incident{ordersInc}, podOnly, Open, 0, 1},
+		{"no Target, same key, new startsAt joins", []Incident{ordersInc, podOnlyInc}, sig("am/ppp", "PodNotReady", nil, t0.Add(time.Minute)), Join, 2, 2},
+		{"no Target, other series of the same name joins", []Incident{ordersInc, podOnlyInc}, sig("am/qqq", "PodNotReady", nil, t0), Join, 2, 2},
 		{"no Target never joins a Target's Incident", []Incident{ordersInc}, sig("am/aaa", "KubePodCrashLooping", nil, t0), Open, 0, 1},
-		{"no Target, different key opens", []Incident{podOnlyInc}, sig("am/qqq", "PodNotReady", nil, t0), Open, 0, 1},
+		{"no Target, different name opens", []Incident{podOnlyInc}, sig("am/qqq", "KubePodNotReady", nil, t0), Open, 0, 1},
+		{"no Target, same name from another source opens", []Incident{podOnlyInc}, func() signal.Signal {
+			s := sig("am2/ppp", "PodNotReady", nil, t0)
+			s.Source.Instance = "am2"
+			return s
+		}(), Open, 0, 1},
 		{"resolving the last member resolves", []Incident{ordersInc}, func() signal.Signal { s := crash; s.Status = signal.Resolved; return s }(), Resolve, 1, 1},
 	}
 	for _, tt := range tests {
@@ -83,7 +89,7 @@ func TestTriageOpenRecordsTargetOrKey(t *testing.T) {
 	}
 
 	d = Triage(nil, sig("am/ppp", "PodNotReady", nil, t0), now)
-	if d.Incident.Target != nil || d.Incident.Key != "am/ppp" {
+	if d.Incident.Target != nil || d.Incident.Key != "am/PodNotReady" {
 		t.Errorf("no-Target Incident: target %v, key %q", d.Incident.Target, d.Incident.Key)
 	}
 }

@@ -39,7 +39,7 @@ const (
 type Incident struct {
 	ID           int64          // 0 until stored
 	Target       *signal.Target // nil when no Signal names a workload
-	Key          string         // the opening Signal's key; set only when Target is nil
+	Key          string         // <source instance>/<Signal name>; set only when Target is nil
 	OpenedAt     time.Time
 	Members      []Member
 	TicketRef    string // empty until the ticket exists
@@ -88,7 +88,7 @@ type Decision struct {
 }
 
 // Triage decides what s does to incs: every Incident that is not closed, at
-// most one per Target (or per key when there is no Target), plus closed ones
+// most one per Target (or per source and Signal name when there is no Target), plus closed ones
 // for recurrence. It never modifies incs.
 func Triage(incs []Incident, s signal.Signal, now time.Time) Decision {
 	if s.Status != signal.Firing {
@@ -103,7 +103,7 @@ func Triage(incs []Incident, s signal.Signal, now time.Time) Decision {
 	if i < 0 {
 		inc := Incident{Target: s.Target, OpenedAt: now, Members: []Member{m}, State: StateOpen, OpenSince: now, UpdatedAt: now}
 		if s.Target == nil {
-			inc.Key = s.Key
+			inc.Key = noTargetKey(s)
 		}
 		for _, old := range incs {
 			if old.State == StateClosed && sameIncident(old, s) && old.ID > inc.RecurrenceOf {
@@ -240,7 +240,11 @@ func clone(inc Incident) Incident {
 
 func sameIncident(inc Incident, s signal.Signal) bool {
 	if s.Target == nil {
-		return inc.Target == nil && inc.Key == s.Key
+		return inc.Target == nil && inc.Key == noTargetKey(s)
 	}
 	return inc.Target != nil && *inc.Target == *s.Target
 }
+
+// noTargetKey groups the series of one alert rule from one source, so a
+// rule that fires per label (such as one per rule group) opens one Incident.
+func noTargetKey(s signal.Signal) string { return s.Source.Instance + "/" + s.Name }
