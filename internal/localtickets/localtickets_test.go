@@ -19,7 +19,7 @@ func open(t *testing.T, path string) *Tickets {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = tk.Shutdown() })
+	t.Cleanup(func() { _ = tk.CloseDB() })
 	return tk
 }
 
@@ -130,7 +130,7 @@ func TestTicketsSurviveARestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = first.Shutdown()
+	_ = first.CloseDB()
 
 	tk := open(t, path)
 	if err := tk.Comment(ctx, ref, "after restart"); err != nil {
@@ -169,35 +169,48 @@ func TestTicketTextCannotInjectMarkupOrScript(t *testing.T) {
 	}
 }
 
-func TestStateCloseAndSetTitle(t *testing.T) {
-	tk, err := Open(filepath.Join(t.TempDir(), "tickets.db"), time.Now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = tk.Shutdown() }()
+func TestTicketsFollowTheIncidentLifecycle(t *testing.T) {
 	ctx := context.Background()
-	ref, err := tk.Create(ctx, "old", "body")
+	tk := open(t, filepath.Join(t.TempDir(), "tickets.db"))
+	ref, err := tk.Create(ctx, "[critical] KubePodCrashLooping on ic-target/demo/Deployment/orders", "body")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if closed, _, err := tk.State(ctx, ref); err != nil || closed {
-		t.Fatalf("new ticket: closed=%v err=%v", closed, err)
+		t.Fatalf("State of a new ticket = %v, %v, want open", closed, err)
 	}
-	if err := tk.SetTitle(ctx, ref, "new title"); err != nil {
+
+	if err := tk.SetTitle(ctx, ref, "KubePodCrashLooping on ic-target/demo/Deployment/orders"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tk.Close(ctx, ref); err != nil {
 		t.Fatal(err)
 	}
-	if closed, _, err := tk.State(ctx, ref); err != nil || !closed {
-		t.Fatalf("after Close: closed=%v err=%v", closed, err)
+	closed, reason, err := tk.State(ctx, ref)
+	if err != nil || !closed || reason != "completed" {
+		t.Fatalf("State after Close = %v, %q, %v, want closed, completed", closed, reason, err)
 	}
-	rec := httptest.NewRecorder()
-	tk.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/tickets/"+ref, nil))
-	if !strings.Contains(rec.Body.String(), "new title") {
-		t.Fatalf("page lacks the new title:\n%s", rec.Body)
+
+	h := tk.Handler()
+	_, list := get(t, h, http.MethodGet, "/tickets")
+	_, page := get(t, h, http.MethodGet, "/tickets/1")
+	_, md := get(t, h, http.MethodGet, "/tickets/1.md")
+	for name, body := range map[string]string{"list": list, "page": page, "markdown": md} {
+		if strings.Contains(body, "[critical]") || !strings.Contains(body, "KubePodCrashLooping on ic-target/demo/Deployment/orders") {
+			t.Errorf("%s does not show the new title:\n%s", name, body)
+		}
+		if !strings.Contains(body, "Closed") {
+			t.Errorf("%s does not show the ticket closed:\n%s", name, body)
+		}
 	}
-	if err := tk.Close(ctx, "999"); err == nil {
-		t.Fatal("closing a missing ticket succeeded")
+
+	for name, err := range map[string]error{
+		"State":    func() error { _, _, err := tk.State(ctx, "9"); return err }(),
+		"Close":    tk.Close(ctx, "9"),
+		"SetTitle": tk.SetTitle(ctx, "9", "x"),
+	} {
+		if err == nil {
+			t.Errorf("%s of an unknown ticket succeeded", name)
+		}
 	}
 }

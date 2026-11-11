@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,9 +73,9 @@ func annotated(text string) map[string]any {
 
 func investigateWith(t *testing.T, l Link, model *recordingLLM, a map[string]any) *harness {
 	t.Helper()
-	h := startWith(t, t.TempDir(), &fakeTickets{}, prodAndStaging(), nil, func(log *audit.Log, tickets Ticketing, now func() time.Time) *Investigator {
+	h := startWith(t, t.TempDir(), &fakeTickets{}, prodAndStaging(), nil, func(log *audit.Log, tickets Ticketing, logger *slog.Logger, now func() time.Time) *Investigator {
 		ev := NewEvidence([]Location{{Name: "prod", Environment: "production", Token: "x"}}, l, log, now)
-		return NewInvestigator(model, "openrouter/free", testBudget, ev, tickets, log, now)
+		return NewInvestigator(model, "openrouter/free", testBudget, ev, tickets, log, logger, now)
 	})
 	h.send(tokenProd, a)
 	h.cp.Wait()

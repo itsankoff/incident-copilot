@@ -148,9 +148,7 @@ func (v *Investigator) Run(ctx context.Context, inc triage.Incident) error {
 		return err
 	}
 	if ctx.Err() != nil {
-		return v.audit.Append(v.now(), "investigation.cancelled", inc.ID, map[string]any{
-			"reason": context.Cause(ctx).Error(), "steps": inv.steps, "tokens": inv.tokens,
-		})
+		return v.cancelled(inc, inv, context.Cause(ctx).Error())
 	}
 	failures := gate1(inv.rca, inv.ledger)
 	// What the ticket shows: the submitted RCA, its failures, and the
@@ -175,19 +173,14 @@ func (v *Investigator) Run(ctx context.Context, inc triage.Incident) error {
 	// The ticket's state wins: an RCA is never posted on a closed ticket.
 	closed, reason, err := v.tickets.State(ctx, inc.TicketRef)
 	if err == nil && closed {
-		return v.audit.Append(v.now(), "investigation.cancelled", inc.ID, map[string]any{
-			"reason": fmt.Sprintf("ticket %s was closed by a human (%s) before the RCA was posted", inc.TicketRef, reason),
-			"steps":  inv.steps, "tokens": inv.tokens,
-		})
+		return v.cancelled(inc, inv, fmt.Sprintf("ticket %s was closed by a human (%s) before the RCA was posted", inc.TicketRef, reason))
 	}
 	if err == nil {
 		err = v.tickets.Comment(ctx, inc.TicketRef, v.render(inv, failures))
 	}
 	if err != nil {
 		if ctx.Err() != nil {
-			return v.audit.Append(v.now(), "investigation.cancelled", inc.ID, map[string]any{
-				"reason": context.Cause(ctx).Error(), "steps": inv.steps, "tokens": inv.tokens,
-			})
+			return v.cancelled(inc, inv, context.Cause(ctx).Error())
 		}
 		return err
 	}
@@ -200,6 +193,18 @@ func (v *Investigator) Run(ctx context.Context, inc triage.Incident) error {
 		ready = append(ready, "url", url)
 	}
 	v.logger.Info("ticket.ready", ready...)
+	return nil
+}
+
+// cancelled records that inc's investigation stopped, for reason, before
+// its RCA was posted.
+func (v *Investigator) cancelled(inc triage.Incident, inv investigation, reason string) error {
+	if err := v.audit.Append(v.now(), "investigation.cancelled", inc.ID, map[string]any{
+		"reason": reason, "steps": inv.steps, "tokens": inv.tokens,
+	}); err != nil {
+		return err
+	}
+	v.logger.Info("investigation.cancelled", "incident", inc.ID, "reason", reason, "steps", inv.steps)
 	return nil
 }
 

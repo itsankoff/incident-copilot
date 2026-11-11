@@ -279,6 +279,7 @@ func (s *Server) closeIfTicketClosed(ctx context.Context, inc triage.Incident, n
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	s.logDecision(ctx, nil, d, inc.ID)
 	s.stopWork(inc.ID, fmt.Errorf("incident %d closed: %s (ticket %s, %s)", inc.ID, d.Reason, inc.TicketRef, reason))
 	return &d.Incident, nil
 }
@@ -309,7 +310,7 @@ func (s *Server) apply(ctx context.Context, incs []triage.Incident, d triage.Dec
 		if err := s.auditDecision(sig, decision, 0, now); err != nil {
 			return err
 		}
-		s.logSignal(ctx, sig, d.Kind, 0)
+		s.logDecision(ctx, sig, d, 0)
 		return nil
 	}
 
@@ -390,12 +391,15 @@ func (s *Server) apply(ctx context.Context, incs []triage.Incident, d triage.Dec
 		return err
 	}
 	// Logged once stored, so a Signal the source must re-send logs nothing.
-	s.logSignal(ctx, sig, d.Kind, inc.ID)
-	switch d.Kind {
-	case triage.Open:
+	s.logDecision(ctx, sig, d, inc.ID)
+	if d.Kind == triage.Open {
 		s.logger.Info("ticket.created", "incident", inc.ID, "adapter", s.tickets.Name(), "ref", inc.TicketRef, "kind", "incident")
-	case triage.Join:
-		s.logger.Info("ticket.commented", "incident", inc.ID, "adapter", s.tickets.Name(), "ref", inc.TicketRef, "kind", "signal")
+	}
+	if comment != "" {
+		s.logger.Info("ticket.commented", "incident", inc.ID, "adapter", s.tickets.Name(), "ref", inc.TicketRef, "kind", string(d.Kind))
+	}
+	if d.Kind == triage.Close {
+		s.logger.Info("ticket.closed", "incident", inc.ID, "adapter", s.tickets.Name(), "ref", inc.TicketRef)
 	}
 
 	switch {
@@ -429,13 +433,13 @@ func index(incs []triage.Incident, id int64) int {
 	return slices.IndexFunc(incs, func(inc triage.Incident) bool { return inc.ID == id })
 }
 
-// logSignal logs a Signal and its Triage decision with names only. A repeat
-// notice or a dropped Signal changes nothing a reader follows, so it logs at
-// debug level.
-func (s *Server) logSignal(ctx context.Context, sig *signal.Signal, kind triage.Kind, incident int64) {
-	level := slog.LevelDebug
-	if kind == triage.Open || kind == triage.Join {
-		level = slog.LevelInfo
+// logDecision logs a Triage decision, after the Signal it was made for, if
+// any, with names only. A repeat notice or a dropped Signal changes nothing a
+// reader follows, so it logs at debug level.
+func (s *Server) logDecision(ctx context.Context, sig *signal.Signal, d triage.Decision, incident int64) {
+	level := slog.LevelInfo
+	if d.Kind == triage.Repeat || d.Kind == triage.Drop {
+		level = slog.LevelDebug
 	}
 	if sig != nil {
 		target := ""
@@ -444,7 +448,11 @@ func (s *Server) logSignal(ctx context.Context, sig *signal.Signal, kind triage.
 		}
 		s.logger.Log(ctx, level, "signal.received", "incident", incident, "source", sig.Source.Kind+"/"+sig.Source.Instance, "name", sig.Name, "target", target)
 	}
-	s.logger.Log(ctx, level, "triage.decision", "incident", incident, "decision", string(kind))
+	args := []any{"incident", incident, "decision", string(d.Kind)}
+	if d.Reason != "" {
+		args = append(args, "reason", d.Reason)
+	}
+	s.logger.Log(ctx, level, "triage.decision", args...)
 }
 
 // The ticket shows identifiers only, never Alert annotations.

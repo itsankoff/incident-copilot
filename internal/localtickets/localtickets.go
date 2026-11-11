@@ -26,8 +26,8 @@ CREATE TABLE IF NOT EXISTS tickets (
 	id         INTEGER PRIMARY KEY AUTOINCREMENT,
 	title      TEXT NOT NULL,
 	body       TEXT NOT NULL,
-	closed     INTEGER NOT NULL DEFAULT 0,
-	created_at TEXT NOT NULL
+	created_at TEXT NOT NULL,
+	closed_at  TEXT
 );
 CREATE TABLE IF NOT EXISTS comments (
 	id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,8 +58,8 @@ func Open(path string, now func() time.Time) (*Tickets, error) {
 	return &Tickets{db: db, now: now}, nil
 }
 
-// Shutdown closes the database.
-func (t *Tickets) Shutdown() error { return t.db.Close() }
+// CloseDB closes the tickets database.
+func (t *Tickets) CloseDB() error { return t.db.Close() }
 
 // Name names the adapter in the Control plane's log.
 func (t *Tickets) Name() string { return "local" }
@@ -93,33 +93,37 @@ func (t *Tickets) Comment(ctx context.Context, ref, body string) error {
 	return nil
 }
 
-// State reports whether ticket ref is closed. The page is read-only, so only
-// Close closes a local ticket, and it gives no reason.
+// State reports whether ticket ref is closed. Only incident-copilot closes a
+// local ticket, since the page is read-only, so the reason is always the one
+// Close records.
 func (t *Tickets) State(ctx context.Context, ref string) (bool, string, error) {
-	var closed bool
-	if err := t.db.QueryRowContext(ctx, `SELECT closed FROM tickets WHERE id = ?`, ref).Scan(&closed); err != nil {
-		return false, "", fmt.Errorf("local tickets: read %s: %w", ref, err)
+	var closedAt sql.NullString
+	if err := t.db.QueryRowContext(ctx, `SELECT closed_at FROM tickets WHERE id = ?`, ref).Scan(&closedAt); err != nil {
+		return false, "", fmt.Errorf("local tickets: state of %s: %w", ref, err)
 	}
-	return closed, "", nil
+	if !closedAt.Valid {
+		return false, "", nil
+	}
+	return true, "completed", nil
 }
 
-// Close closes ticket ref.
+// Close closes ticket ref; closing a closed ticket keeps its first close.
 func (t *Tickets) Close(ctx context.Context, ref string) error {
-	return t.update(ctx, ref, `UPDATE tickets SET closed = 1 WHERE id = ?`, "close")
+	return t.update(ctx, "close", ref, `UPDATE tickets SET closed_at = COALESCE(closed_at, ?) WHERE id = ?`, t.stamp(), ref)
 }
 
-// SetTitle changes the title of ticket ref.
+// SetTitle renames ticket ref.
 func (t *Tickets) SetTitle(ctx context.Context, ref, title string) error {
-	return t.update(ctx, ref, `UPDATE tickets SET title = ? WHERE id = ?`, "retitle", title)
+	return t.update(ctx, "retitle", ref, `UPDATE tickets SET title = ? WHERE id = ?`, title, ref)
 }
 
-func (t *Tickets) update(ctx context.Context, ref, query, what string, args ...any) error {
-	res, err := t.db.ExecContext(ctx, query, append(args, ref)...)
+func (t *Tickets) update(ctx context.Context, op, ref, query string, args ...any) error {
+	res, err := t.db.ExecContext(ctx, query, args...)
 	if err != nil {
-		return fmt.Errorf("local tickets: %s %s: %w", what, ref, err)
+		return fmt.Errorf("local tickets: %s %s: %w", op, ref, err)
 	}
 	if n, err := res.RowsAffected(); err != nil || n == 0 {
-		return fmt.Errorf("local tickets: %s %s: no such ticket", what, ref)
+		return fmt.Errorf("local tickets: %s %s: no such ticket", op, ref)
 	}
 	return nil
 }
@@ -155,6 +159,9 @@ func (t *Tickets) Handler() http.Handler {
 			for _, c := range tk.Comments {
 				_, _ = fmt.Fprintf(w, "\n---\n\nComment %s\n\n%s\n", c.Created, strings.TrimRight(c.Body, "\n"))
 			}
+			if tk.Closed != "" {
+				_, _ = fmt.Fprintf(w, "\n---\n\nClosed %s\n", tk.Closed)
+			}
 		default:
 			render(w, view{Title: "#" + tk.Ref + " " + tk.Title, Ticket: &tk})
 		}
@@ -167,6 +174,7 @@ type ticket struct {
 	Ref          string
 	Title        string
 	Created      string
+	Closed       string // when it was closed, or "" while open
 	Body         string
 	Comments     []comment
 	CommentCount int // in the list only
@@ -178,7 +186,7 @@ type comment struct {
 }
 
 func (t *Tickets) list(ctx context.Context) ([]ticket, error) {
-	rows, err := t.db.QueryContext(ctx, `SELECT t.id, t.title, t.created_at, COUNT(c.id)
+	rows, err := t.db.QueryContext(ctx, `SELECT t.id, t.title, t.created_at, COALESCE(t.closed_at, ''), COUNT(c.id)
 		FROM tickets t LEFT JOIN comments c ON c.ticket_id = t.id GROUP BY t.id ORDER BY t.id DESC`)
 	if err != nil {
 		return nil, err
@@ -187,7 +195,7 @@ func (t *Tickets) list(ctx context.Context) ([]ticket, error) {
 	var out []ticket
 	for rows.Next() {
 		var tk ticket
-		if err := rows.Scan(&tk.Ref, &tk.Title, &tk.Created, &tk.CommentCount); err != nil {
+		if err := rows.Scan(&tk.Ref, &tk.Title, &tk.Created, &tk.Closed, &tk.CommentCount); err != nil {
 			return nil, err
 		}
 		out = append(out, tk)
@@ -197,8 +205,8 @@ func (t *Tickets) list(ctx context.Context) ([]ticket, error) {
 
 func (t *Tickets) ticket(ctx context.Context, ref string) (ticket, error) {
 	tk := ticket{Ref: ref}
-	if err := t.db.QueryRowContext(ctx, `SELECT title, body, created_at FROM tickets WHERE id = ?`, ref).
-		Scan(&tk.Title, &tk.Body, &tk.Created); err != nil {
+	if err := t.db.QueryRowContext(ctx, `SELECT title, body, created_at, COALESCE(closed_at, '') FROM tickets WHERE id = ?`, ref).
+		Scan(&tk.Title, &tk.Body, &tk.Created, &tk.Closed); err != nil {
 		return ticket{}, err
 	}
 	rows, err := t.db.QueryContext(ctx, `SELECT body, created_at FROM comments WHERE ticket_id = ? ORDER BY id`, ref)
@@ -265,13 +273,16 @@ code { background: #eff1f3; border-radius: 4px; padding: 0 .25rem; }
 {{- range .Comments}}
 <section class="box"><header>Comment {{.Created}}</header><div>{{markdown .Body}}</div></section>
 {{- end}}
+{{- if .Closed}}
+<p><strong>Closed</strong> {{.Closed}}</p>
+{{- end}}
 {{- else}}
 <h1>Tickets</h1>
 {{- if .List}}
 <table>
-<tr><th>#</th><th>Title</th><th>Opened</th><th>Comments</th></tr>
+<tr><th>#</th><th>Title</th><th>Opened</th><th>Comments</th><th>State</th></tr>
 {{- range .List}}
-<tr><td>{{.Ref}}</td><td><a href="/tickets/{{.Ref}}">{{.Title}}</a></td><td>{{.Created}}</td><td>{{.CommentCount}}</td></tr>
+<tr><td>{{.Ref}}</td><td><a href="/tickets/{{.Ref}}">{{.Title}}</a></td><td>{{.Created}}</td><td>{{.CommentCount}}</td><td>{{if .Closed}}Closed{{else}}Open{{end}}</td></tr>
 {{- end}}
 </table>
 {{- else}}

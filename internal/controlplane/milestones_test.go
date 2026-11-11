@@ -119,7 +119,7 @@ func TestAnIncidentsMilestonesAreLoggedOnceInOrder(t *testing.T) {
 	want(t, lines[11], map[string]any{"ref": "1", "url": "https://tickets.example/1"})
 	want(t, lines[12], map[string]any{"name": "OrdersErrorRate"})
 	want(t, lines[13], map[string]any{"decision": "join"})
-	want(t, lines[14], map[string]any{"adapter": "fake", "ref": "1", "kind": "signal"})
+	want(t, lines[14], map[string]any{"adapter": "fake", "ref": "1", "kind": "join"})
 
 	// Names and counts only: no Evidence, model text, or Alert annotations,
 	// at any level.
@@ -152,5 +152,67 @@ func TestAnInvestigationOutOfBudgetLogsExhausted(t *testing.T) {
 	}
 	if strings.Contains(h.logs.String(), "sensor-side failure") {
 		t.Error("the log contains the Sensor's error text")
+	}
+}
+
+func TestAnIncidentsLifecycleIsLogged(t *testing.T) {
+	h := newHarness(t, t.TempDir(), &fakeTickets{})
+	crash := alert("KubePodCrashLooping", "aaa", orders)
+	h.send(tokenProd, crash)
+	h.send(tokenProd, resolvedAlert(crash))
+	h.now = h.now.Add(24 * time.Hour)
+	h.sweep()
+
+	lines := h.milestones()
+	got := msgs(lines)
+	order := []string{
+		"signal.received", "triage.decision", "ticket.created",
+		"signal.received", "triage.decision", "ticket.commented",
+		"triage.decision", "ticket.commented", "ticket.closed", // the Sweep's idle close
+	}
+	if strings.Join(got, " ") != strings.Join(order, " ") {
+		t.Fatalf("milestones:\n %q\nwant\n %q", got, order)
+	}
+	want(t, lines[4], map[string]any{"incident": float64(1), "decision": "resolve"})
+	want(t, lines[5], map[string]any{"incident": float64(1), "kind": "resolve"})
+	want(t, lines[6], map[string]any{"incident": float64(1), "decision": "close"})
+	if r, _ := lines[6]["reason"].(string); !strings.Contains(r, "24 hours") {
+		t.Errorf("close decision reason %q", lines[6]["reason"])
+	}
+	want(t, lines[7], map[string]any{"incident": float64(1), "kind": "close"})
+	want(t, lines[8], map[string]any{"incident": float64(1), "adapter": "fake", "ref": "1"})
+}
+
+func TestAHumanCloseCancellingAnInvestigationIsLogged(t *testing.T) {
+	model := &blockingLLM{started: make(chan struct{})}
+	h := startRCA(t, model, &fakeLink{}, testBudget)
+	h.send(tokenProd, alert("KubePodCrashLooping", "aaa", orders))
+	select {
+	case <-model.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the investigation never asked the LLM")
+	}
+	h.tickets.closeByHuman("1", "completed")
+	h.sweep()
+
+	lines := h.milestones()
+	got := strings.Join(msgs(lines), " ")
+	if !strings.HasSuffix(got, "investigation.cancelled") || strings.Contains(got, "rca.posted") {
+		t.Fatalf("milestones %q, want them to end in investigation.cancelled", got)
+	}
+	var closeDecision bool
+	for _, line := range lines {
+		if line["msg"] == "triage.decision" && line["decision"] == "close" {
+			closeDecision = true
+			if r, _ := line["reason"].(string); !strings.Contains(r, "closed by a human") {
+				t.Errorf("close decision reason %q", line["reason"])
+			}
+		}
+		if line["msg"] == "investigation.cancelled" {
+			want(t, line, map[string]any{"incident": float64(1), "steps": float64(1)})
+		}
+	}
+	if !closeDecision {
+		t.Errorf("no close decision logged in %q", got)
 	}
 }

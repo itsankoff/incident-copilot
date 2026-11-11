@@ -87,7 +87,7 @@ func runControlPlane(ctx context.Context, logger *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		defer func() { _ = local.Shutdown() }()
+		defer func() { _ = local.CloseDB() }()
 		tickets, ticketPage = local, local.Handler()
 		logger.Warn("IC_GITHUB_REPO and IC_GITHUB_TOKEN unset: using the local ticketing adapter, for demo purposes only, "+
 			"with its tickets at /tickets; production uses GitHub Issues, and ServiceNow is planned (#68)", "adapter", local.Name())
