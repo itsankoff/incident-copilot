@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -113,10 +114,10 @@ func startAdvice(t *testing.T, model llm.Client) *harness {
 // rollback is still the only reviewed declaration.
 func startAdvertising(t *testing.T, model llm.Client, catalog ...action.Declaration) *harness {
 	t.Helper()
-	return startWith(t, t.TempDir(), &fakeTickets{}, prodAndStaging(), nil, func(st *store.Store, log *audit.Log, tickets Ticketing, now func() time.Time) *Investigator {
+	return startWith(t, t.TempDir(), &fakeTickets{}, prodAndStaging(), nil, func(st *store.Store, log *audit.Log, tickets Ticketing, logger *slog.Logger, now func() time.Time) *Investigator {
 		ev := NewEvidence([]Location{{Name: "prod", Environment: "production", Token: "x"}}, &fakeLink{}, log, now)
 		rem := Remediation{Executors: fakeExecutors{"prod": catalog}, Reviewed: []action.Declaration{rollback}, Policy: Policy{Ceilings: map[string]Level{"production": L2}}, KillSwitch: st}
-		return NewInvestigator(model, "openrouter/free", testBudget, ev, rem, tickets, log, now)
+		return NewInvestigator(model, "openrouter/free", testBudget, ev, rem, tickets, log, logger, now)
 	})
 }
 

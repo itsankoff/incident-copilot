@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -111,9 +112,9 @@ func refsIn(t *testing.T, req llm.Request) map[string]string {
 
 func startRCA(t *testing.T, model llm.Client, l *fakeLink, budget Budget) *harness {
 	t.Helper()
-	return startWith(t, t.TempDir(), &fakeTickets{}, prodAndStaging(), nil, func(_ *store.Store, log *audit.Log, tickets Ticketing, now func() time.Time) *Investigator {
+	return startWith(t, t.TempDir(), &fakeTickets{}, prodAndStaging(), nil, func(_ *store.Store, log *audit.Log, tickets Ticketing, logger *slog.Logger, now func() time.Time) *Investigator {
 		ev := NewEvidence([]Location{{Name: "prod", Environment: "production", Token: "x"}}, l, log, now)
-		return NewInvestigator(model, "openrouter/free", budget, ev, Remediation{}, tickets, log, now)
+		return NewInvestigator(model, "openrouter/free", budget, ev, Remediation{}, tickets, log, logger, now)
 	})
 }
 

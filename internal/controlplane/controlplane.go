@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -33,6 +34,10 @@ type Ticketing interface {
 	State(ctx context.Context, ref string) (closed bool, reason string, err error)
 	Close(ctx context.Context, ref string) error
 	SetTitle(ctx context.Context, ref, title string) error
+	// Name names the adapter in the Control plane's log.
+	Name() string
+	// URL is where a human reads ticket ref, or "" when the adapter cannot say.
+	URL(ref string) string
 }
 
 // Store is the Control plane's state; *store.Store implements it.
@@ -46,6 +51,7 @@ type Server struct {
 	store        Store
 	tickets      Ticketing
 	audit        *audit.Log
+	logger       *slog.Logger // milestones for humans; the audit log is the record
 	now          func() time.Time
 	investigator *Investigator // nil: Incidents are not investigated
 
@@ -59,8 +65,8 @@ type Server struct {
 // work is an Incident's running investigation, which stopWork cancels.
 type work struct{ cancel context.CancelCauseFunc }
 
-func New(alertmanager signal.Adapter, st Store, tickets Ticketing, log *audit.Log, now func() time.Time, inv *Investigator) *Server {
-	return &Server{alertmanager: alertmanager, store: st, tickets: tickets, audit: log, now: now, investigator: inv,
+func New(alertmanager signal.Adapter, st Store, tickets Ticketing, log *audit.Log, logger *slog.Logger, now func() time.Time, inv *Investigator) *Server {
+	return &Server{alertmanager: alertmanager, store: st, tickets: tickets, audit: log, logger: logger, now: now, investigator: inv,
 		work: map[int64]*work{}}
 }
 
@@ -273,6 +279,7 @@ func (s *Server) closeIfTicketClosed(ctx context.Context, inc triage.Incident, n
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	s.logDecision(ctx, nil, d, inc.ID)
 	s.stopWork(inc.ID, fmt.Errorf("incident %d closed: %s (ticket %s, %s)", inc.ID, d.Reason, inc.TicketRef, reason))
 	return &d.Incident, nil
 }
@@ -300,7 +307,11 @@ func (s *Server) apply(ctx context.Context, incs []triage.Incident, d triage.Dec
 		decision["recurrenceOf"] = inc.RecurrenceOf
 	}
 	if d.Kind == triage.Drop {
-		return s.auditDecision(sig, decision, 0, now)
+		if err := s.auditDecision(sig, decision, 0, now); err != nil {
+			return err
+		}
+		s.logDecision(ctx, sig, d, 0)
+		return nil
 	}
 
 	tx, err := s.store.Begin(ctx)
@@ -379,6 +390,17 @@ func (s *Server) apply(ctx context.Context, incs []triage.Incident, d triage.Dec
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	// Logged once stored, so a Signal the source must re-send logs nothing.
+	s.logDecision(ctx, sig, d, inc.ID)
+	if d.Kind == triage.Open {
+		s.logger.Info("ticket.created", "incident", inc.ID, "adapter", s.tickets.Name(), "ref", inc.TicketRef, "kind", "incident")
+	}
+	if comment != "" {
+		s.logger.Info("ticket.commented", "incident", inc.ID, "adapter", s.tickets.Name(), "ref", inc.TicketRef, "kind", string(d.Kind))
+	}
+	if d.Kind == triage.Close {
+		s.logger.Info("ticket.closed", "incident", inc.ID, "adapter", s.tickets.Name(), "ref", inc.TicketRef)
+	}
 
 	switch {
 	case d.Kind == triage.Close:
@@ -389,6 +411,7 @@ func (s *Server) apply(ctx context.Context, incs []triage.Incident, d triage.Dec
 		s.startWork(inc.ID, func(ctx context.Context) {
 			if err := s.investigator.Run(ctx, inc); err != nil {
 				_ = s.audit.Append(s.now(), "investigation.failed", inc.ID, map[string]string{"error": err.Error()})
+				s.logger.Error("investigation.failed", "incident", inc.ID, "error", err.Error())
 			}
 		})
 	}
@@ -408,6 +431,28 @@ func (s *Server) auditDecision(sig *signal.Signal, decision map[string]any, inci
 // index is the position of Incident id in incs, or -1.
 func index(incs []triage.Incident, id int64) int {
 	return slices.IndexFunc(incs, func(inc triage.Incident) bool { return inc.ID == id })
+}
+
+// logDecision logs a Triage decision, after the Signal it was made for, if
+// any, with names only. A repeat notice or a dropped Signal changes nothing a
+// reader follows, so it logs at debug level.
+func (s *Server) logDecision(ctx context.Context, sig *signal.Signal, d triage.Decision, incident int64) {
+	level := slog.LevelInfo
+	if d.Kind == triage.Repeat || d.Kind == triage.Drop {
+		level = slog.LevelDebug
+	}
+	if sig != nil {
+		target := ""
+		if sig.Target != nil {
+			target = sig.Target.String()
+		}
+		s.logger.Log(ctx, level, "signal.received", "incident", incident, "source", sig.Source.Kind+"/"+sig.Source.Instance, "name", sig.Name, "target", target)
+	}
+	args := []any{"incident", incident, "decision", string(d.Kind)}
+	if d.Reason != "" {
+		args = append(args, "reason", d.Reason)
+	}
+	s.logger.Log(ctx, level, "triage.decision", args...)
 }
 
 // The ticket shows identifiers only, never Alert annotations.

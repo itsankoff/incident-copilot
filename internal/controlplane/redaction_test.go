@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,9 +75,9 @@ func annotated(text string) map[string]any {
 
 func investigateWith(t *testing.T, l Link, model *recordingLLM, a map[string]any) *harness {
 	t.Helper()
-	h := startWith(t, t.TempDir(), &fakeTickets{}, prodAndStaging(), nil, func(_ *store.Store, log *audit.Log, tickets Ticketing, now func() time.Time) *Investigator {
+	h := startWith(t, t.TempDir(), &fakeTickets{}, prodAndStaging(), nil, func(_ *store.Store, log *audit.Log, tickets Ticketing, logger *slog.Logger, now func() time.Time) *Investigator {
 		ev := NewEvidence([]Location{{Name: "prod", Environment: "production", Token: "x"}}, l, log, now)
-		return NewInvestigator(model, "openrouter/free", testBudget, ev, Remediation{}, tickets, log, now)
+		return NewInvestigator(model, "openrouter/free", testBudget, ev, Remediation{}, tickets, log, logger, now)
 	})
 	h.send(tokenProd, a)
 	h.cp.Wait()
@@ -229,10 +230,10 @@ func TestTheRemediationLoopGetsRedactedFramedEvidence(t *testing.T) {
 		"workload_state": {Data: json.RawMessage(`{"revision":"4","logs":[` + mustJSON(line) + `]}`)},
 	}}
 	model := &recordedLLM{next: remediate(t, func(_, ref string) string { return rollbackTo(ref) }), args: `{"note":"use ` + fakeGHToken + `"}`}
-	h := startWith(t, t.TempDir(), &fakeTickets{}, prodAndStaging(), nil, func(st *store.Store, log *audit.Log, tickets Ticketing, now func() time.Time) *Investigator {
+	h := startWith(t, t.TempDir(), &fakeTickets{}, prodAndStaging(), nil, func(st *store.Store, log *audit.Log, tickets Ticketing, logger *slog.Logger, now func() time.Time) *Investigator {
 		ev := NewEvidence([]Location{{Name: "prod", Environment: "production", Token: "x"}}, l, log, now)
 		rem := Remediation{Executors: fakeExecutors{"prod": {rollback}}, Reviewed: []action.Declaration{rollback}, Policy: Policy{Ceilings: map[string]Level{"production": L2}}, KillSwitch: st}
-		return NewInvestigator(model, "openrouter/free", testBudget, ev, rem, tickets, log, now)
+		return NewInvestigator(model, "openrouter/free", testBudget, ev, rem, tickets, log, logger, now)
 	})
 	h.send(tokenProd, alert("KubePodCrashLooping", "aaa", orders))
 	h.cp.Wait()

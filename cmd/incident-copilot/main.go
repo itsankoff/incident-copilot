@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"os"
 	ossignal "os/signal"
-	"sync"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -23,6 +23,7 @@ import (
 	"github.com/itsankoff/incident-copilot/internal/github"
 	"github.com/itsankoff/incident-copilot/internal/kubernetes"
 	"github.com/itsankoff/incident-copilot/internal/link"
+	"github.com/itsankoff/incident-copilot/internal/localtickets"
 	"github.com/itsankoff/incident-copilot/internal/openrouter"
 	"github.com/itsankoff/incident-copilot/internal/sensor"
 	"github.com/itsankoff/incident-copilot/internal/signal"
@@ -78,13 +79,20 @@ func runControlPlane(ctx context.Context, logger *slog.Logger) error {
 	defer func() { _ = log.Close() }()
 
 	var tickets controlplane.Ticketing
+	var ticketPage http.Handler // the local adapter's page; nil for GitHub
 	repo := ""
 	if gh := cfg.GitHub; gh != nil {
 		tickets = github.New(gh.APIURL, gh.Repo, gh.Token, &http.Client{Timeout: 30 * time.Second})
 		repo = gh.Repo
 	} else {
-		tickets = &logTickets{logger: logger}
-		logger.Warn("IC_GITHUB_REPO and IC_GITHUB_TOKEN unset: using the fake ticketing adapter, which only logs tickets")
+		local, err := localtickets.Open(filepath.Join(filepath.Dir(cfg.StatePath), "tickets.db"), time.Now)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = local.CloseDB() }()
+		tickets, ticketPage = local, local.Handler()
+		logger.Warn("IC_GITHUB_REPO and IC_GITHUB_TOKEN unset: using the local ticketing adapter, for demo purposes only, "+
+			"with its tickets at /tickets; production uses GitHub Issues, and ServiceNow is planned (#68)", "adapter", local.Name())
 	}
 	tokens := map[string]string{}
 	for _, l := range cfg.Locations {
@@ -100,12 +108,12 @@ func runControlPlane(ctx context.Context, logger *slog.Logger) error {
 		// bounds the whole investigation.
 		client := openrouter.New(openrouter.APIURL, c.Key, &http.Client{Timeout: 2 * time.Minute})
 		rem := controlplane.Remediation{Executors: hub, Reviewed: kubernetes.Actions(), Policy: cfg.Policy, KillSwitch: st}
-		inv = controlplane.NewInvestigator(client, c.Model, c.Budget, ev, rem, tickets, log, time.Now)
+		inv = controlplane.NewInvestigator(client, c.Model, c.Budget, ev, rem, tickets, log, logger, time.Now)
 		model = c.Model
 	} else {
 		logger.Warn("OPENROUTER_API_KEY unset: Incidents get tickets but are not investigated")
 	}
-	cp := controlplane.New(alertmanager.New([]signal.Source{cfg.Alertmanager}), st, tickets, log, time.Now, inv)
+	cp := controlplane.New(alertmanager.New([]signal.Source{cfg.Alertmanager}), st, tickets, log, logger, time.Now, inv)
 	// Deferred after the store and audit log, so it runs before they close: an
 	// investigation in flight finishes (within its time budget, unless the pod
 	// is killed first), though its Evidence queries fail once the hub stops.
@@ -113,6 +121,10 @@ func runControlPlane(ctx context.Context, logger *slog.Logger) error {
 
 	mux := http.NewServeMux()
 	mux.Handle("/link/", hub.Handler())
+	if ticketPage != nil {
+		mux.Handle("/tickets", ticketPage)
+		mux.Handle("/tickets/", ticketPage)
+	}
 	mux.Handle("/", cp.Handler())
 	srv := &http.Server{Addr: cfg.ListenAddr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	debugMux := http.NewServeMux()
@@ -147,7 +159,7 @@ func runControlPlane(ctx context.Context, logger *slog.Logger) error {
 	if p := cfg.Policy.Problem; p != "" {
 		logger.Warn("the Environment policy " + p + ": every ceiling is L1")
 	}
-	logger.Info("control plane listening", "addr", cfg.ListenAddr, "source", cfg.Alertmanager.Instance, "repo", repo, "locations", len(cfg.Locations), "model", model)
+	logger.Info("control plane listening", "addr", cfg.ListenAddr, "source", cfg.Alertmanager.Instance, "ticketing", tickets.Name(), "repo", repo, "locations", len(cfg.Locations), "model", model)
 
 	select {
 	case err := <-errc:
@@ -181,40 +193,5 @@ func runExecutor(ctx context.Context, logger *slog.Logger) error {
 	}
 	logger.Info("executor dialing", "location", cfg.Location, "controlPlane", cfg.ControlPlaneURL)
 	executor.New(link.NewClient(cfg.ControlPlaneURL, cfg.Location, cfg.Token), kubernetes.Actions(), logger).Run(ctx)
-	return nil
-}
-
-// logTickets is the fake ticketing adapter: it logs each ticket instead of
-// writing it anywhere, and its tickets are never closed by a human.
-// References count up from log-1 per process.
-type logTickets struct {
-	logger *slog.Logger
-	mu     sync.Mutex
-	n      int
-}
-
-func (l *logTickets) Create(_ context.Context, title, body string) (string, error) {
-	l.mu.Lock()
-	l.n++
-	ref := fmt.Sprintf("log-%d", l.n)
-	l.mu.Unlock()
-	l.logger.Info("ticket created", "ref", ref, "title", title, "body", body)
-	return ref, nil
-}
-
-func (l *logTickets) Comment(_ context.Context, ref, body string) error {
-	l.logger.Info("ticket comment", "ref", ref, "body", body)
-	return nil
-}
-
-func (l *logTickets) State(context.Context, string) (bool, string, error) { return false, "", nil }
-
-func (l *logTickets) Close(_ context.Context, ref string) error {
-	l.logger.Info("ticket closed", "ref", ref)
-	return nil
-}
-
-func (l *logTickets) SetTitle(_ context.Context, ref, title string) error {
-	l.logger.Info("ticket retitled", "ref", ref, "title", title)
 	return nil
 }

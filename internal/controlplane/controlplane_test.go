@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -110,6 +111,10 @@ func (f *fakeTickets) Comment(_ context.Context, ref, body string) error {
 	return nil
 }
 
+func (f *fakeTickets) Name() string { return "fake" }
+
+func (f *fakeTickets) URL(ref string) string { return "https://tickets.example/" + ref }
+
 type harness struct {
 	t       *testing.T
 	dir     string
@@ -117,6 +122,7 @@ type harness struct {
 	store   *store.Store
 	log     *audit.Log
 	tickets *fakeTickets
+	logs    *syncBuffer // the Control plane's log, at every level
 	cp      *Server
 	now     time.Time
 	close   func()
@@ -144,7 +150,7 @@ func start(t *testing.T, dir string, tickets *fakeTickets, sources []signal.Sour
 
 // startWith is start with an Investigator built by inv, when set.
 func startWith(t *testing.T, dir string, tickets *fakeTickets, sources []signal.Source, wrap func(*store.Store) Store,
-	inv func(*store.Store, *audit.Log, Ticketing, func() time.Time) *Investigator) *harness {
+	inv func(*store.Store, *audit.Log, Ticketing, *slog.Logger, func() time.Time) *Investigator) *harness {
 	t.Helper()
 	st, err := store.Open(filepath.Join(dir, "state.db"))
 	if err != nil {
@@ -154,7 +160,8 @@ func startWith(t *testing.T, dir string, tickets *fakeTickets, sources []signal.
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{t: t, dir: dir, store: st, log: log, tickets: tickets, now: t0.Add(time.Minute)}
+	h := &harness{t: t, dir: dir, store: st, log: log, tickets: tickets, logs: &syncBuffer{}, now: t0.Add(time.Minute)}
+	logger := slog.New(slog.NewJSONHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	var s Store = st
 	if wrap != nil {
 		s = wrap(st)
@@ -162,9 +169,9 @@ func startWith(t *testing.T, dir string, tickets *fakeTickets, sources []signal.
 	now := func() time.Time { return h.now }
 	var investigator *Investigator
 	if inv != nil {
-		investigator = inv(st, log, tickets, now)
+		investigator = inv(st, log, tickets, logger, now)
 	}
-	h.cp = New(alertmanager.New(sources), s, tickets, log, now, investigator)
+	h.cp = New(alertmanager.New(sources), s, tickets, log, logger, now, investigator)
 	srv := httptest.NewServer(h.cp.Handler())
 	h.url = srv.URL
 	h.close = func() {

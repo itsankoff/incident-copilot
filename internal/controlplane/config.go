@@ -18,7 +18,7 @@ type Config struct {
 	StatePath    string // SQLite
 	AuditPath    string // hash-chained JSONL
 	Alertmanager signal.Source
-	GitHub       *GitHub // nil: the fake ticketing adapter
+	GitHub       *GitHub // nil: the local ticketing adapter, for demos
 	LLM          *LLM    // nil: Incidents are not investigated
 	Locations    []Location
 	Policy       Policy // autonomy ceilings per Environment
@@ -84,7 +84,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	case repo != "" && token != "":
 		cfg.GitHub = &GitHub{APIURL: env("IC_GITHUB_API_URL", "https://api.github.com"), Repo: repo, Token: token}
 	case repo != "" || token != "":
-		return Config{}, fmt.Errorf("IC_GITHUB_REPO and IC_GITHUB_TOKEN: set both, or neither for the fake ticketing adapter")
+		return Config{}, fmt.Errorf("IC_GITHUB_REPO and IC_GITHUB_TOKEN: set both, or neither for the local ticketing adapter")
 	}
 	if key := getenv("OPENROUTER_API_KEY"); key != "" {
 		cfg.LLM = &LLM{Key: key, Model: env("IC_LLM_MODEL", "openrouter/free")}

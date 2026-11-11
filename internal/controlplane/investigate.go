@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -41,11 +42,12 @@ type Investigator struct {
 	rem      Remediation
 	tickets  Ticketing
 	audit    *audit.Log
+	logger   *slog.Logger // milestones, with names and counts only
 	now      func() time.Time
 }
 
-func NewInvestigator(c llm.Client, model string, b Budget, ev *Evidence, rem Remediation, tickets Ticketing, log *audit.Log, now func() time.Time) *Investigator {
-	return &Investigator{llm: c, model: model, budget: b, evidence: ev, rem: rem, tickets: tickets, audit: log, now: now}
+func NewInvestigator(c llm.Client, model string, b Budget, ev *Evidence, rem Remediation, tickets Ticketing, log *audit.Log, logger *slog.Logger, now func() time.Time) *Investigator {
+	return &Investigator{llm: c, model: model, budget: b, evidence: ev, rem: rem, tickets: tickets, audit: log, logger: logger, now: now}
 }
 
 const submitTool = "submit_rca"
@@ -116,6 +118,7 @@ type loopSpec struct {
 	system, brief string
 	submit        llm.ToolSpec
 	submission    string // what the model submits, such as RCA
+	milestone     string // the loop's name in the milestone log: investigation or remediation
 	nudge         string // sent when the model answers without a tool call
 	// accept reads a submission's arguments. An error goes back to the model,
 	// which may submit again.
@@ -127,6 +130,7 @@ type loopRun struct {
 	submitted bool // false when a budget or an error ended it first
 	ledger    []ledgerEntry
 	stopped   string
+	exhausted string   // the budget that ran out: steps, tokens, or time
 	models    []string // the model that answered each request
 	steps     int
 	tokens    int
@@ -143,24 +147,30 @@ type investigation struct {
 // audits the cause, and writes nothing to the ticket. It returns only audit
 // and ticketing failures.
 func (v *Investigator) Run(ctx context.Context, inc triage.Incident) error {
+	start := v.now()
 	if inc.Target == nil {
 		// The Evidence tools read a Target; with none there is nothing to read.
-		if err := v.audit.Append(v.now(), "investigation.skipped", inc.ID, map[string]string{"reason": "the Incident has no Target"}); err != nil {
+		const reason = "the Incident has no Target"
+		if err := v.audit.Append(start, "investigation.skipped", inc.ID, map[string]string{"reason": reason}); err != nil {
 			return err
 		}
+		v.logger.Info("investigation.skipped", "incident", inc.ID, "reason", reason)
 		return v.advise(ctx, inc, nil, nil, "")
 	}
-	if err := v.audit.Append(v.now(), "investigation.started", inc.ID, map[string]any{
+	if err := v.audit.Append(start, "investigation.started", inc.ID, map[string]any{
 		"model": v.model, "promptVersion": PromptVersion, "budget": v.budget,
 		"tools": toolNames(evidenceTools),
 	}); err != nil {
 		return err
 	}
+	v.logger.Info("investigation.started", "incident", inc.ID, "model", v.model,
+		slog.Group("budget", "steps", v.budget.Steps, "tokens", v.budget.Tokens, "time", v.budget.Time.String()))
 	var inv investigation
 	var err error
 	inv.loopRun, err = v.loop(ctx, inc, loopSpec{
 		promptVersion: PromptVersion, system: systemPrompt, brief: incidentBrief(inc), submit: submitSpec, submission: "RCA",
-		nudge: "Call submit_rca with your root-cause analysis.",
+		milestone: "investigation",
+		nudge:     "Call submit_rca with your root-cause analysis.",
 		accept: func(arguments string) error {
 			var r RCA
 			if err := json.Unmarshal([]byte(arguments), &r); err != nil {
@@ -174,9 +184,7 @@ func (v *Investigator) Run(ctx context.Context, inc triage.Incident) error {
 		return err
 	}
 	if ctx.Err() != nil {
-		return v.audit.Append(v.now(), "investigation.cancelled", inc.ID, map[string]any{
-			"reason": context.Cause(ctx).Error(), "steps": inv.steps, "tokens": inv.tokens,
-		})
+		return v.cancelled(inc, inv, context.Cause(ctx).Error())
 	}
 	failures := gate1(inv.rca, inv.ledger)
 	// What the ticket shows: the submitted RCA, its failures, and the
@@ -192,29 +200,43 @@ func (v *Investigator) Run(ctx context.Context, inc triage.Incident) error {
 	}); err != nil {
 		return err
 	}
+	msg, outcome := "investigation.finished", []any{"incident", inc.ID, "confidence", confidence(inv, failures),
+		"steps", inv.steps, "duration", v.now().Sub(start).Round(time.Millisecond).String()}
+	if inv.exhausted != "" {
+		msg, outcome = "investigation.exhausted", append(outcome, "budget", inv.exhausted)
+	}
+	v.logger.Info(msg, outcome...)
 	// The ticket's state wins: an RCA is never posted on a closed ticket.
 	closed, reason, err := v.tickets.State(ctx, inc.TicketRef)
 	if err == nil && closed {
-		return v.audit.Append(v.now(), "investigation.cancelled", inc.ID, map[string]any{
-			"reason": fmt.Sprintf("ticket %s was closed by a human (%s) before the RCA was posted", inc.TicketRef, reason),
-			"steps":  inv.steps, "tokens": inv.tokens,
-		})
+		return v.cancelled(inc, inv, fmt.Sprintf("ticket %s was closed by a human (%s) before the RCA was posted", inc.TicketRef, reason))
 	}
 	if err == nil {
 		err = v.tickets.Comment(ctx, inc.TicketRef, v.render(inv, failures))
 	}
 	if err != nil {
 		if ctx.Err() != nil {
-			return v.audit.Append(v.now(), "investigation.cancelled", inc.ID, map[string]any{
-				"reason": context.Cause(ctx).Error(), "steps": inv.steps, "tokens": inv.tokens,
-			})
+			return v.cancelled(inc, inv, context.Cause(ctx).Error())
 		}
 		return err
 	}
 	if err := v.audit.Append(v.now(), "ticket.commented", inc.ID, map[string]string{"ref": inc.TicketRef, "kind": "rca"}); err != nil {
 		return err
 	}
+	v.logger.Info("rca.posted", "incident", inc.ID, "ref", inc.TicketRef)
 	return v.advise(ctx, inc, inv.rca, inv.ledger, confidence(inv, failures))
+}
+
+// cancelled records that inc's investigation stopped, for reason, before
+// its RCA was posted.
+func (v *Investigator) cancelled(inc triage.Incident, inv investigation, reason string) error {
+	if err := v.audit.Append(v.now(), "investigation.cancelled", inc.ID, map[string]any{
+		"reason": reason, "steps": inv.steps, "tokens": inv.tokens,
+	}); err != nil {
+		return err
+	}
+	v.logger.Info("investigation.cancelled", "incident", inc.ID, "reason", reason, "steps", inv.steps)
+	return nil
 }
 
 // loop talks to the model until it makes an accepted submission or a budget
@@ -230,9 +252,11 @@ func (v *Investigator) loop(ctx context.Context, inc triage.Incident, spec loopS
 		switch {
 		case inv.steps >= v.budget.Steps:
 			inv.stopped = fmt.Sprintf("step budget of %d ran out", v.budget.Steps)
+			inv.exhausted = "steps"
 			return inv, nil
 		case inv.tokens >= v.budget.Tokens:
 			inv.stopped = fmt.Sprintf("token budget of %d ran out", v.budget.Tokens)
+			inv.exhausted = "tokens"
 			return inv, nil
 		}
 		inv.steps++
@@ -247,9 +271,11 @@ func (v *Investigator) loop(ctx context.Context, inc triage.Incident, spec loopS
 			if aerr := v.audit.Append(v.now(), "llm.error", inc.ID, map[string]any{"step": inv.steps, "error": err.Error()}); aerr != nil {
 				return inv, aerr
 			}
+			v.logger.Info(spec.milestone+".step", "incident", inc.ID, "step", inv.steps, "llm", v.model, "ok", false)
 			inv.stopped = "the LLM request failed: " + err.Error()
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				inv.stopped = fmt.Sprintf("time budget of %s ran out", v.budget.Time)
+				inv.exhausted = "time"
 			}
 			return inv, nil
 		}
@@ -258,6 +284,7 @@ func (v *Investigator) loop(ctx context.Context, inc triage.Incident, spec loopS
 		}); err != nil {
 			return inv, err
 		}
+		v.logger.Info(spec.milestone+".step", "incident", inc.ID, "step", inv.steps, "llm", resp.Model, "ok", true)
 		inv.models = append(inv.models, resp.Model)
 		inv.tokens += resp.Usage.InputTokens + resp.Usage.OutputTokens
 		resp.Message.Role = llm.Assistant
@@ -282,22 +309,29 @@ func (v *Investigator) loop(ctx context.Context, inc triage.Incident, spec loopS
 // toolResult runs one tool call and returns what the model reads back. It
 // returns an error only when the audit log cannot be written.
 func (v *Investigator) toolResult(ctx context.Context, inc triage.Incident, spec loopSpec, tc llm.ToolCall, inv *loopRun) (string, error) {
+	logStep := func(tool string, ok bool) {
+		v.logger.Info(spec.milestone+".step", "incident", inc.ID, "step", inv.steps, "tool", tool, "ok", ok)
+	}
 	if tc.Name == spec.submit.Name {
 		if err := spec.accept(tc.Arguments); err != nil {
+			logStep(spec.submit.Name, false)
 			// The decoder's message names the field that did not match.
 			b, _ := json.Marshal(map[string]string{"error": "arguments do not match the " + spec.submit.Name + " schema: " + err.Error()})
 			return string(b), nil
 		}
+		logStep(spec.submit.Name, true)
 		inv.submitted = true
 		return `{"ok":true}`, nil
 	}
 	if !slices.ContainsFunc(evidenceTools, func(t llm.ToolSpec) bool { return t.Name == tc.Name }) {
+		logStep("(not offered)", false) // the name is the model's text, so it stays out
 		return `{"error":"tool not offered"}`, nil
 	}
 	res, err := v.evidence.Query(ctx, inc.ID, evidence.Query{Tool: tc.Name, Target: *inc.Target})
 	if errors.Is(err, errAudit) {
 		return "", err
 	}
+	logStep(tc.Name, err == nil)
 	inv.ledger = append(inv.ledger, ledgerEntry{Ref: res.Ref, Tool: tc.Name, OK: err == nil})
 	if err != nil {
 		// Redacted before framing, so a cut-off private key cannot take the

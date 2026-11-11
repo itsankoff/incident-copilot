@@ -290,6 +290,7 @@ func (v *Investigator) advise(ctx context.Context, inc triage.Incident, rca *RCA
 		if err := v.audit.Append(v.now(), "remediation.skipped", inc.ID, map[string]string{"reason": skip}); err != nil {
 			return err
 		}
+		v.logger.Info("remediation.skipped", "incident", inc.ID, "reason", skip)
 	} else {
 		names := map[string][]string{}
 		for ex, cat := range offered {
@@ -303,10 +304,11 @@ func (v *Investigator) advise(ctx context.Context, inc triage.Incident, rca *RCA
 		}); err != nil {
 			return err
 		}
+		v.logger.Info("remediation.started", "incident", inc.ID, "model", v.model)
 		var submitted Advice
 		r, err := v.loop(ctx, inc, loopSpec{
 			promptVersion: AdvicePromptVersion, system: advicePrompt, brief: adviceBrief(inc, rca, conf, rcaLedger, offered),
-			submit: submitAdviceSpec, submission: "Advice", nudge: "Call submit_advice with your Advice.",
+			submit: submitAdviceSpec, submission: "Advice", milestone: "remediation", nudge: "Call submit_advice with your Advice.",
 			accept: func(arguments string) error {
 				var a Advice
 				if err := json.Unmarshal([]byte(arguments), &a); err != nil {
@@ -331,6 +333,7 @@ func (v *Investigator) advise(ctx context.Context, inc triage.Incident, rca *RCA
 		}); err != nil {
 			return err
 		}
+		v.logger.Info("remediation.finished", "incident", inc.ID, "submitted", r.submitted, "steps", r.steps)
 		adv = submitted
 		if !r.submitted {
 			adv = Advice{Reason: "the remediation loop stopped before the model answered: " + r.stopped}
@@ -397,7 +400,17 @@ func (v *Investigator) advise(ctx context.Context, inc triage.Incident, rca *RCA
 		}
 		return err
 	}
-	return v.audit.Append(v.now(), "ticket.commented", inc.ID, map[string]string{"ref": inc.TicketRef, "kind": "advice"})
+	if err := v.audit.Append(v.now(), "ticket.commented", inc.ID, map[string]string{"ref": inc.TicketRef, "kind": "advice"}); err != nil {
+		return err
+	}
+	v.logger.Info("advice.posted", "incident", inc.ID, "ref", inc.TicketRef, "level", d.Level.String())
+	// The ticket holds the RCA, when there is one, and the Advice.
+	ready := []any{"incident", inc.ID, "ref", inc.TicketRef}
+	if url := v.tickets.URL(inc.TicketRef); url != "" {
+		ready = append(ready, "url", url)
+	}
+	v.logger.Info("ticket.ready", ready...)
+	return nil
 }
 
 var levelMeaning = map[Level]string{
