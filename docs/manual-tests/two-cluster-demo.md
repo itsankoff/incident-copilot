@@ -1,6 +1,6 @@
 # Manual test: The two-cluster demo
 
-This test checks the demo topology end to end. `ic-target` runs the demo app and the observability stack, and `ic-control-plane` runs the Control plane. An alert fired in `ic-target`'s Alertmanager opens an Incident in the Control plane: first with the fake ticketing adapter, then as a GitHub issue. It also checks that only the Alertmanager → Control plane connection exists, that every Makefile call pins its cluster's context, and that `make cluster` and `make down` cover both clusters. Run it whenever the clusters, the Makefile's demo targets, `deploy/control-plane`, or the Alertmanager route change.
+This test checks the demo topology end to end. `ic-target` runs the demo app and the observability stack, and `ic-control-plane` runs the Control plane. An alert fired in `ic-target`'s Alertmanager opens an Incident in the Control plane: first with the local ticketing adapter, then as a GitHub issue. It also checks that only the Alertmanager → Control plane connection exists, that every Makefile call pins its cluster's context, and that `make cluster` and `make down` cover both clusters. Run it whenever the clusters, the Makefile's demo targets, `deploy/control-plane`, or the Alertmanager route change.
 
 ## Before you start
 
@@ -32,12 +32,12 @@ make cluster 2>&1 | grep -E 'already exists|Happy Helming'
 
 ## 2. Deploy the demo app and the Control plane without `.env.demo`
 
-Move `.env.demo` aside, so the Control plane starts with the fake ticketing adapter:
+Move `.env.demo` aside, so the Control plane starts with the local ticketing adapter:
 
 ```sh
 mv .env.demo .env.demo.off
 make deploy
-make control-plane   # expect "no .env.demo: the Control plane starts with the fake ticketing adapter"
+make control-plane   # expect "no .env.demo: the Control plane starts with the local ticketing adapter"
 make status
 # expect under "== ic-target": orders x2, inventory, and loadgen Running in demo, and the
 # monitoring and logging pods Running. Under "== ic-control-plane": control-plane Running.
@@ -58,20 +58,20 @@ fire() { # ALERTNAME DEPLOYMENT [--end=...]
     --annotation=description=MANUAL-TEST-ANNOTATION --alertmanager.url=http://localhost:9093
 }
 icp logs deploy/control-plane | jq -r .msg
-# expect: "IC_GITHUB_REPO and IC_GITHUB_TOKEN unset: using the fake ticketing adapter, ..."
+# expect: "IC_GITHUB_REPO and IC_GITHUB_TOKEN unset: using the local ticketing adapter, for demo purposes only, ..."
 # and "control plane listening"
 ```
 
-## 3. Alert → Incident with the fake ticketing adapter
+## 3. Alert → Incident with the local ticketing adapter
 
 ```sh
 fire FakeTicketCheck inventory
 sleep 20
 audit | jq -c '[.seq, .type, .incident, (.data.kind // .data.ref // "")]'
-icp logs deploy/control-plane | jq -c 'select(.msg == "ticket created") | {ref, title}'
+icp logs deploy/control-plane | jq -c 'select(.msg == "ticket.created") | {incident, adapter, ref}'
 ```
 
-Within about 10 seconds (`group_wait`), the audit log shows `signal.received`, `triage.decision` (`open`), and `ticket.created` with the ref `log-1`. The log shows `ticket created` with the title `[warning] FakeTicketCheck on ic-target/demo/Deployment/inventory`. Other demo alerts and Kubernetes core alerts can arrive too, if any are firing. `Watchdog` never does.
+Within about 10 seconds (`group_wait`), the audit log shows `signal.received`, `triage.decision` (`open`), and `ticket.created` with a ticket number as its ref. The log shows `ticket.created` with the adapter `local` and the same ref. [Local ticketing and milestone logs](local-ticketing-and-milestones.md) shows the ticket's page. Other demo alerts and Kubernetes core alerts can arrive too, if any are firing. `Watchdog` never does.
 
 Resolve the alert, so it stops repeating:
 

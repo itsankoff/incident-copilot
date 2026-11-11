@@ -62,7 +62,7 @@ curl -s localhost:8081/debug/locations   # expect "online":true
 sen set env deploy/sensor IC_SENSOR_LOCATION=ghost
 sen rollout status deploy/sensor
 sleep 8
-sen logs deploy/sensor | tail -1 | jq -r .msg   # expect "link down: refused by the Control plane"
+sen logs deploy/sensor | tail -1 | jq -r '.msg + ": " + .error'   # expect "link.down: refused by the Control plane"
 sen set env deploy/sensor IC_SENSOR_LOCATION=ic-target
 sen rollout status deploy/sensor
 ```

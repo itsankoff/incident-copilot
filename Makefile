@@ -158,7 +158,7 @@ control-plane: ## Build incident-copilot, load it into ic-control-plane, and dep
 	@# IC_ALERTMANAGER_TOKEN and IC_LOCATIONS come from the Makefile, so they match ic-target's.
 	@# kustomize keeps quotes in an env file's values, so a quoted value loses them here.
 	@if [ -f .env.demo ]; then grep -vE '^(IC_ALERTMANAGER_TOKEN|IC_LOCATIONS)=' .env.demo | sed -E 's/^([A-Za-z_][A-Za-z0-9_]*)="(.*)"$$/\1=\2/' > build/control-plane/.env.demo || true; \
-	else echo "no .env.demo: the Control plane starts with the fake ticketing adapter and investigates nothing"; touch build/control-plane/.env.demo; fi
+	else echo "no .env.demo: the Control plane starts with the local ticketing adapter and investigates nothing"; touch build/control-plane/.env.demo; fi
 	@printf '%s\n' \
 	  'apiVersion: kustomize.config.k8s.io/v1beta1' \
 	  'kind: Kustomization' \

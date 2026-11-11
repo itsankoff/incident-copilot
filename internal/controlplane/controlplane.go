@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -33,6 +34,10 @@ type Ticketing interface {
 	State(ctx context.Context, ref string) (closed bool, reason string, err error)
 	Close(ctx context.Context, ref string) error
 	SetTitle(ctx context.Context, ref, title string) error
+	// Name names the adapter in the Control plane's log.
+	Name() string
+	// URL is where a human reads ticket ref, or "" when the adapter cannot say.
+	URL(ref string) string
 }
 
 // Store is the Control plane's state; *store.Store implements it.
@@ -46,6 +51,7 @@ type Server struct {
 	store        Store
 	tickets      Ticketing
 	audit        *audit.Log
+	logger       *slog.Logger // milestones for humans; the audit log is the record
 	now          func() time.Time
 	investigator *Investigator // nil: Incidents are not investigated
 
@@ -59,8 +65,8 @@ type Server struct {
 // work is an Incident's running investigation, which stopWork cancels.
 type work struct{ cancel context.CancelCauseFunc }
 
-func New(alertmanager signal.Adapter, st Store, tickets Ticketing, log *audit.Log, now func() time.Time, inv *Investigator) *Server {
-	return &Server{alertmanager: alertmanager, store: st, tickets: tickets, audit: log, now: now, investigator: inv,
+func New(alertmanager signal.Adapter, st Store, tickets Ticketing, log *audit.Log, logger *slog.Logger, now func() time.Time, inv *Investigator) *Server {
+	return &Server{alertmanager: alertmanager, store: st, tickets: tickets, audit: log, logger: logger, now: now, investigator: inv,
 		work: map[int64]*work{}}
 }
 
@@ -300,7 +306,11 @@ func (s *Server) apply(ctx context.Context, incs []triage.Incident, d triage.Dec
 		decision["recurrenceOf"] = inc.RecurrenceOf
 	}
 	if d.Kind == triage.Drop {
-		return s.auditDecision(sig, decision, 0, now)
+		if err := s.auditDecision(sig, decision, 0, now); err != nil {
+			return err
+		}
+		s.logSignal(sig, d.Kind, 0)
+		return nil
 	}
 
 	tx, err := s.store.Begin(ctx)
@@ -379,6 +389,14 @@ func (s *Server) apply(ctx context.Context, incs []triage.Incident, d triage.Dec
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	// Logged once stored, so a Signal the source must re-send logs nothing.
+	s.logSignal(sig, d.Kind, inc.ID)
+	switch d.Kind {
+	case triage.Open:
+		s.logger.Info("ticket.created", "incident", inc.ID, "adapter", s.tickets.Name(), "ref", inc.TicketRef, "kind", "incident")
+	case triage.Join:
+		s.logger.Info("ticket.commented", "incident", inc.ID, "adapter", s.tickets.Name(), "ref", inc.TicketRef, "kind", "signal")
+	}
 
 	switch {
 	case d.Kind == triage.Close:
@@ -389,6 +407,7 @@ func (s *Server) apply(ctx context.Context, incs []triage.Incident, d triage.Dec
 		s.startWork(inc.ID, func(ctx context.Context) {
 			if err := s.investigator.Run(ctx, inc); err != nil {
 				_ = s.audit.Append(s.now(), "investigation.failed", inc.ID, map[string]string{"error": err.Error()})
+				s.logger.Error("investigation.failed", "incident", inc.ID, "error", err.Error())
 			}
 		})
 	}
@@ -408,6 +427,25 @@ func (s *Server) auditDecision(sig *signal.Signal, decision map[string]any, inci
 // index is the position of Incident id in incs, or -1.
 func index(incs []triage.Incident, id int64) int {
 	return slices.IndexFunc(incs, func(inc triage.Incident) bool { return inc.ID == id })
+}
+
+// logSignal logs a Signal and its Triage decision with names only. A repeat
+// notice or a dropped Signal changes nothing a reader follows, so it logs at
+// debug level.
+func (s *Server) logSignal(sig *signal.Signal, kind triage.Kind, incident int64) {
+	level := slog.LevelDebug
+	if kind == triage.Open || kind == triage.Join {
+		level = slog.LevelInfo
+	}
+	ctx := context.Background()
+	if sig != nil {
+		target := ""
+		if sig.Target != nil {
+			target = sig.Target.String()
+		}
+		s.logger.Log(ctx, level, "signal.received", "incident", incident, "source", sig.Source.Kind+"/"+sig.Source.Instance, "name", sig.Name, "target", target)
+	}
+	s.logger.Log(ctx, level, "triage.decision", "incident", incident, "decision", string(kind))
 }
 
 // The ticket shows identifiers only, never Alert annotations.

@@ -26,6 +26,18 @@ func New(apiURL, repo, token string, client *http.Client) *Issues {
 	return &Issues{apiURL: strings.TrimSuffix(apiURL, "/"), repo: repo, token: token, client: client}
 }
 
+// Name names the adapter in the Control plane's log.
+func (g *Issues) Name() string { return "github" }
+
+// URL is issue ref's page on github.com, or "" for any other API, whose web
+// address this adapter does not know.
+func (g *Issues) URL(ref string) string {
+	if g.apiURL != "https://api.github.com" {
+		return ""
+	}
+	return "https://github.com/" + g.repo + "/issues/" + ref
+}
+
 // Create opens an issue and returns its number.
 func (g *Issues) Create(ctx context.Context, title, body string) (string, error) {
 	var out struct {
