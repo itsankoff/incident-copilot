@@ -17,6 +17,9 @@ func (t Target) String() string {
 	return t.Location + "/" + t.Namespace + "/" + t.Kind + "/" + t.Name
 }
 
+// DetectorKey is the key of Detector name's Signal about t (ADR 0002 D3).
+func DetectorKey(name string, t Target) string { return "detector:" + name + "/" + t.String() }
+
 // Mapping resolves a Target from an Alert's labels. It never walks owners and
 // never guesses: labels that name no workload give no Target.
 type Mapping struct {

@@ -99,7 +99,7 @@ func startLink(t *testing.T) *linkHarness {
 func (h *linkHarness) sensorUp(location, token string, tools ...evidence.Tool) (kill func()) {
 	h.t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	s := sensor.New(link.NewClient(h.url, location, token), tools, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s := sensor.New(link.NewClient(h.url, location, token), tools, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	s.Retry = 5 * time.Millisecond
 	done := make(chan struct{})
 	go func() {
