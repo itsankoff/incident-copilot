@@ -6,11 +6,32 @@ It is written in Go, calls LLM APIs directly with tool calling (no agent framewo
 
 > **Status:** early development, actively worked on. Progress is tracked on the [project board](https://github.com/users/itsankoff/projects/1) (Backlog → AFK Ready / Need Human → In Progress → In Review → Done). The design below is the target; see [Roadmap](#roadmap) for what is implemented.
 
+## Overview
+
+![incident-copilot architecture: alerts and Detectors come in, the Control plane investigates with an LLM, Runbooks, and read-only evidence, and writes an RCA to your ticket and Advice that a human approves before the Executor runs it](docs/images/architecture.svg)
+
+## Try it yourself
+
+One command sets up two local Kubernetes clusters, rolls out a broken change, and follows incident-copilot from the alert to a cited RCA in a ticket. It runs on macOS and Linux, and needs Docker with 6 CPUs and 10 GB of memory (4 CPUs and 8 GB at the least) and a free [OpenRouter](https://openrouter.ai) key:
+
+```sh
+make demo            # or make demo F=oom
+```
+
+`make demo` checks the prerequisites and offers to install what is missing, asking first. It asks for the OpenRouter key if `.env.demo` has none. Tickets go to a local ticket page that the Control plane serves. That page is for the demo only: in production, incident-copilot writes to GitHub Issues. The first run takes about 15 minutes, most of it starting the clusters, and a run on existing clusters takes about 5.
+
+| `F=` | The broken rollout of `orders` | It fires |
+|---|---|---|
+| `crash-loop` (default) | A malformed config value | `PodCrashLooping`, `DeploymentRolloutStuck` |
+| `oom` | A memory limit below what it uses under load | `ContainerOOMKilled`, `PodCrashLooping` |
+| `bad-image` | An image tag that does not exist | `PodImagePullBackOff`, `DeploymentRolloutStuck` |
+| `unschedulable` | A CPU request no node can satisfy | `PodUnschedulable`, `DeploymentRolloutStuck` |
+
+[`docs/demo.md`](docs/demo.md) walks through what runs where, the live timeline, how to read the RCA and the audit log, and troubleshooting. To build, test, or run the parts by hand, see [`docs/development.md`](docs/development.md).
+
 **A real RCA from `make demo`.** A rollout broke `orders` with a malformed config value. incident-copilot opened a ticket and investigated the cluster, and Gate 1 checked every claim's citations. It caught one that cites no other claim, and capped the confidence at `low`:
 
 <img src="docs/images/demo-rca.png" alt="The local ticket page for PodCrashLooping on ic-target/demo/Deployment/orders: the Signals, a joined DeploymentRolloutStuck Signal, and a Root-cause analysis whose claims cite workload_state and events Evidence queries, with one claim failing Gate 1 and the confidence capped at low" width="720">
-
-![incident-copilot architecture: alerts and Detectors come in, the Control plane investigates with an LLM, Runbooks, and read-only evidence, and writes an RCA to your ticket and Advice that a human approves before the Executor runs it](docs/images/architecture.svg)
 
 ---
 
@@ -68,25 +89,6 @@ MCP servers are always called through incident-copilot's own client, behind read
 
 Every field is made of claims that cite the tool calls behind them. A claim with no evidence is labelled as such, and it caps the confidence at `low`. Ticketing is behind an adapter interface. Production uses **GitHub Issues**, and **ServiceNow** is planned ([#68](https://github.com/itsankoff/incident-copilot/issues/68)).
 
-## Try it
-
-One command sets up two local Kubernetes clusters, rolls out a broken change, and follows incident-copilot from the alert to a cited RCA in a ticket. It runs on macOS and Linux, and needs Docker with 6 CPUs and 10 GB of memory (4 CPUs and 8 GB at the least) and a free [OpenRouter](https://openrouter.ai) key:
-
-```sh
-make demo            # or make demo F=oom
-```
-
-`make demo` checks the prerequisites and offers to install what is missing, asking first. It asks for the OpenRouter key if `.env.demo` has none. Tickets go to a local ticket page that the Control plane serves. That page is for the demo only: in production, incident-copilot writes to GitHub Issues. The first run takes about 15 minutes, most of it starting the clusters, and a run on existing clusters takes about 5.
-
-| `F=` | The broken rollout of `orders` | It fires |
-|---|---|---|
-| `crash-loop` (default) | A malformed config value | `PodCrashLooping`, `DeploymentRolloutStuck` |
-| `oom` | A memory limit below what it uses under load | `ContainerOOMKilled`, `PodCrashLooping` |
-| `bad-image` | An image tag that does not exist | `PodImagePullBackOff`, `DeploymentRolloutStuck` |
-| `unschedulable` | A CPU request no node can satisfy | `PodUnschedulable`, `DeploymentRolloutStuck` |
-
-[`docs/demo.md`](docs/demo.md) walks through what runs where, the live timeline, how to read the RCA and the audit log, and troubleshooting. To build, test, or run the parts by hand, see [`docs/development.md`](docs/development.md).
-
 ## Trust model
 
 Remediation is where an AI can do real damage, so it is the most constrained part of the system. **The model drafts, deterministic code checks, and a human approves.**
@@ -133,21 +135,7 @@ Every investigation records its model, prompt, and Runbook versions, so it can b
 
 `incident-copilot -role control-plane` reads its configuration from environment variables. It serves the Alertmanager webhook at `/webhook/alertmanager`, and Alertmanager must send `Authorization: Bearer <IC_ALERTMANAGER_TOKEN>`. It also serves the Sensor link at `/link/`. `incident-copilot -role sensor` dials out to it; `make sensor` deploys one into `ic-target`. `incident-copilot -role executor` dials out the same way and advertises its Actions, `rollback_deployment` for now; `make executor` deploys one into `ic-target`. The Control plane offers an advertised Action only when it matches the declaration in its own code exactly. It runs no Action yet (#57), so every Advice is shown at L1 in the ticket, with the steps to carry out by hand and the reason for each cap.
 
-The kill switch caps every later decision at its level, with no restart. Set it on the debug listener with `curl -X PUT localhost:8081/debug/kill-switch -d '{"level":"L1"}'` (L0, L1, or L2; `""` clears it), through `kubectl port-forward` in a cluster. It lives in the store and is audited as `killswitch.set`.
-
-For the local demo, `.env.demo` (gitignored, with [`.env.demo.example`](.env.demo.example) as its template) holds the secrets, and `make control-plane` turns it into the `incident-copilot-env` Secret in `ic-control-plane`. Without `IC_GITHUB_REPO` and `IC_GITHUB_TOKEN`, the Control plane starts with the local ticketing adapter, which is for demo purposes only: it keeps tickets next to its state and shows them, read-only, at `/tickets` on its HTTP port, and it logs that it did.
-
-To check the whole path against a real GitHub repository, follow the manual test in [`docs/manual-tests/github-issues.md`](docs/manual-tests/github-issues.md).
-
-### Alertmanager route
-
-Copy the route and receiver in [`deploy/alertmanager/incident-copilot.yaml`](deploy/alertmanager/incident-copilot.yaml) into your Alertmanager configuration, and set the URL and the token file. Its timers keep paired alerts inside the settle window and re-send firing alerts every 5 minutes, which Signal liveness relies on. The file explains each setting. For an Alertmanager HA pair, give both members the same token, so they are one Signal source and send the same key. The second notice is then a repeat.
-
-`ic-target`'s Alertmanager uses the same route. Both clusters sit on kind's Docker network, so it sends to the Control plane's NodePort by the `ic-control-plane` node's container name, `http://ic-control-plane-control-plane:30080/webhook/alertmanager`, with the token `demo-alertmanager-token`. To use another token, pass the same `IC_ALERTMANAGER_TOKEN=<token>` to both `make observability` and `make control-plane`. The demo Control plane is the Signal source `ic-target-alertmanager` with the Location `ic-target`.
-
-### Ingest bounds
-
-The Control plane rejects a request body over 1 MiB with `413`. It cuts each label and annotation value to 4 KiB and the raw alert to 64 KiB, and marks the Signal `truncated`. An unparseable body gets `400`. An internal failure gets `5xx`, so Alertmanager retries, and a retry is only a repeat notice. An alert that fails to normalise is dropped and audited, and the rest of its batch is accepted. A non-zero `truncatedAlerts` is audited. The manual test in [`docs/manual-tests/ingest-hardening.md`](docs/manual-tests/ingest-hardening.md) checks all of this and the demo route.
+### Environment variables
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -173,6 +161,24 @@ The Control plane rejects a request body over 1 MiB with `413`. It cuts each lab
 | `IC_SENSOR_TOKEN` | required (Sensor) | The token `IC_LOCATIONS` holds for this Location |
 | `IC_EXECUTOR_LOCATION` | required (Executor) | Location this Executor serves |
 | `IC_EXECUTOR_TOKEN` | required (Executor) | The token `IC_LOCATIONS` holds for this Location: the link stand-in authenticates a Location, not a role |
+
+For the local demo, `.env.demo` (gitignored, with [`.env.demo.example`](.env.demo.example) as its template) holds the secrets, and `make control-plane` turns it into the `incident-copilot-env` Secret in `ic-control-plane`. Without `IC_GITHUB_REPO` and `IC_GITHUB_TOKEN`, the Control plane starts with the local ticketing adapter, which is for demo purposes only: it keeps tickets next to its state and shows them, read-only, at `/tickets` on its HTTP port, and it logs that it did.
+
+To check the whole path against a real GitHub repository, follow the manual test in [`docs/manual-tests/github-issues.md`](docs/manual-tests/github-issues.md).
+
+### Kill switch
+
+The kill switch caps every later decision at its level, with no restart. Set it on the debug listener with `curl -X PUT localhost:8081/debug/kill-switch -d '{"level":"L1"}'` (L0, L1, or L2; `""` clears it), through `kubectl port-forward` in a cluster. It lives in the store and is audited as `killswitch.set`.
+
+### Alertmanager route
+
+Copy the route and receiver in [`deploy/alertmanager/incident-copilot.yaml`](deploy/alertmanager/incident-copilot.yaml) into your Alertmanager configuration, and set the URL and the token file. Its timers keep paired alerts inside the settle window and re-send firing alerts every 5 minutes, which Signal liveness relies on. The file explains each setting. For an Alertmanager HA pair, give both members the same token, so they are one Signal source and send the same key. The second notice is then a repeat.
+
+`ic-target`'s Alertmanager uses the same route. Both clusters sit on kind's Docker network, so it sends to the Control plane's NodePort by the `ic-control-plane` node's container name, `http://ic-control-plane-control-plane:30080/webhook/alertmanager`, with the token `demo-alertmanager-token`. To use another token, pass the same `IC_ALERTMANAGER_TOKEN=<token>` to both `make observability` and `make control-plane`. The demo Control plane is the Signal source `ic-target-alertmanager` with the Location `ic-target`.
+
+### Ingest bounds
+
+The Control plane rejects a request body over 1 MiB with `413`. It cuts each label and annotation value to 4 KiB and the raw alert to 64 KiB, and marks the Signal `truncated`. An unparseable body gets `400`. An internal failure gets `5xx`, so Alertmanager retries, and a retry is only a repeat notice. An alert that fails to normalise is dropped and audited, and the rest of its batch is accepted. A non-zero `truncatedAlerts` is audited. The manual test in [`docs/manual-tests/ingest-hardening.md`](docs/manual-tests/ingest-hardening.md) checks all of this and the demo route.
 
 ## Design choices
 
