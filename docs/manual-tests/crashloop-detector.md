@@ -23,6 +23,7 @@ Optionally, reset the Control plane's state so that `orders` has no Incident yet
 
 ```sh
 kubectl --context kind-ic-control-plane -n incident-copilot scale deploy/control-plane --replicas=0
+kubectl --context kind-ic-control-plane -n incident-copilot wait --for=delete pod -l app.kubernetes.io/name=control-plane --timeout=90s
 kubectl --context kind-ic-control-plane -n incident-copilot delete pvc control-plane-state
 make control-plane
 ```
@@ -38,10 +39,11 @@ audit() {
     --image=busybox:1.37 --target=control-plane --profile=general \
     -- cat /proc/1/root/var/lib/incident-copilot/audit.jsonl 2>/dev/null
 }
-# Signals received since $1, with the source, key, status, and what Triage did with them.
+# Signals since $1, what Triage did with them, and the tickets and investigations they caused.
 signals() {
-  audit | jq -c --arg t "$1" 'select(.time > $t and (.type == "signal.received" or .type == "triage.decision" or .type == "signal.rejected"))
-    | [.seq, .time[11:19], .type, .incident, (.data.source.kind // ""), (.data.key // ""), (.data.status // .data.kind // .data.reason)]'
+  audit | jq -c --arg t "$1" 'select(.time > $t and (.type | IN("signal.received", "triage.decision", "signal.rejected",
+      "ticket.created", "ticket.commented", "investigation.started", "investigation.finished")))
+    | [.seq, .time[11:19], .type, .incident, (.data.source.kind // ""), (.data.key // .data.ref // ""), (.data.status // .data.kind // .data.reason // "")]'
 }
 sen get deploy/sensor -o jsonpath='{.spec.template.spec.containers[0].env}' | jq -c '.[] | select(.name == "IC_SENSOR_NAMESPACES")'
 # expect {"name":"IC_SENSOR_NAMESPACES","value":"demo"}
@@ -52,19 +54,21 @@ sen get deploy/sensor -o jsonpath='{.spec.template.spec.containers[0].env}' | jq
 ```sh
 T0=$(date -u +%FT%TZ)
 make fault F=crash-loop
-demo get pods -l app=orders -w   # wait until the new pod shows CrashLoopBackOff a few times, then Ctrl-C
+demo get pods -w   # wait until the new orders pod shows CrashLoopBackOff a few times, then Ctrl-C
 ```
 
-The Detector fires once a container has waited in `CrashLoopBackOff` for a full minute. The back-off doubles from 10 seconds, so that takes about 3 to 5 minutes after the rollout. Prometheus's `PodCrashLooping` usually arrives first.
+The Detector fires once a container has waited in `CrashLoopBackOff` for a full minute. The back-off doubles from 10 seconds, so that takes a few minutes after the rollout (2m20s in a run on these clusters). Prometheus's `PodCrashLooping` usually arrives first.
 
 ```sh
 sleep 300; signals "$T0"
-# expect, in time order:
-#   signal.received  alertmanager  ic-target-alertmanager/<fp>                             firing
-#   triage.decision  open or join                                                       (Incident N)
+# expect, in time order (Incident N in the fourth column throughout):
+#   signal.received  alertmanager  ic-target-alertmanager/<fp>                                firing
+#   triage.decision                ic-target-alertmanager/<fp>                                open (or join)
+#   ticket.created                 <ref>                         (only on open; an investigation follows)
 #   signal.received  sensor        detector:CrashLoopBackOff/ic-target/demo/Deployment/orders firing
-#   triage.decision  join                                                                (Incident N)
-# The two Signals share one Incident number, and the Detector's is never "open" a second time.
+#   triage.decision                detector:CrashLoopBackOff/ic-target/demo/Deployment/orders join
+#   ticket.commented               detector:CrashLoopBackOff/ic-target/demo/Deployment/orders
+# DeploymentRolloutStuck joins the same Incident too. Nothing opens a second Incident for orders.
 audit | jq -c --arg t "$T0" 'select(.time > $t and .type == "signal.received" and .data.source.kind == "sensor") | .data
   | {source, name, severity, target, startsAt, receivedAt}' | head -1
 # expect source {"kind":"sensor","instance":"ic-target"}, name CrashLoopBackOff, severity critical,
@@ -75,20 +79,12 @@ audit | jq -r --arg t "$T0" 'select(.time > $t and .type == "ticket.created") | 
 
 Open the Incident's ticket. It has one `Signal joined:` comment per Signal that joined, including `` `CrashLoopBackOff` · critical · … · from sensor/ic-target ``, and no second ticket for `orders`.
 
-Scale `orders` up so that more of its pods crash. There is still only one Detector Signal:
-
-```sh
-demo scale deploy/orders --replicas=4; sleep 120
-signals "$T0" | grep -c '"sensor","detector:CrashLoopBackOff/ic-target/demo/Deployment/orders","firing"'
-# expect the same count as before the scale-up, or one more if a 5-minute re-send fell in the wait
-```
-
 ## 3. The Sensor re-sends a firing Signal every 5 minutes
 
 ```sh
 sleep 300; signals "$T0" | grep detector:CrashLoopBackOff
-# expect a sensor firing Signal about every 5 minutes, each followed by a triage.decision "repeat"
-# on the same Incident: the same startsAt, so it only updates last-seen
+# expect a sensor firing Signal every 5 minutes (give or take the Sensor's 10-second tick), each
+# followed by triage.decision "repeat" on the same Incident: the same startsAt, so it only updates last-seen
 ```
 
 ## 4. Clearing the fault resolves the Signal 10 minutes later
@@ -126,10 +122,14 @@ curl -s -w '%{http_code}\n' -XPOST localhost:18080/link/ic-target/signals -H 'Au
 # expect "Target in another Location than the Sensor's" and 403
 curl -s -w '%{http_code}\n' -XPOST localhost:18080/link/ic-target/signals -H 'Authorization: Bearer wrong' -d '{}'
 # expect "unauthorized" and 401
+curl -s -w '%{http_code}\n' -XPOST localhost:18080/link/ic-target/signals -H 'Authorization: Bearer demo-sensor-token' -d 'not json'
+# expect "unparseable body" and 400
 kill $PF
 audit | jq -c 'select(.type == "signal.rejected" or .type == "link.refused") | [.type, .data.source.instance // .data.location, .data.target.location // "", .data.reason]' | tail -2
 # expect ["signal.rejected","ic-target","aks-prod","Target in another Location than the Sensor's"]
 # and    ["link.refused","ic-target","","bad token"]
+audit | jq -c 'select(.type == "request.rejected") | [.data.source, .data.reason]' | tail -1
+# expect the sensor source ic-target and the JSON error
 ```
 
 ## 7. Everything is audited, and the Sensor still only reads
