@@ -14,6 +14,7 @@ make control-plane                    # build incident-copilot image, load into 
 make sensor                           # build incident-copilot image, load into ic-target, apply deploy/sensor (dials out to the Control plane as Location ic-target)
 make status                           # pods in ic-target (demo, monitoring, logging, incident-copilot) and ic-control-plane (incident-copilot)
 make port-forward                     # ic-target's Prometheus :9090, Alertmanager :9093, Loki API :3100, Grafana :3000 (can be toggled off with GRAFANA=0 during make cluster or make observability)
+make k9s                              # k9s on ic-target (CLUSTER=cp for ic-control-plane)
 make down                             # delete both clusters
 ```
 

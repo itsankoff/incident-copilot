@@ -68,11 +68,11 @@ cut -c1-150 "$RUN/audit.jsonl"
 
 | # | Alert | HTTP | Expected on GitHub |
 |---|---|---|---|
-| 1 | `KubePodCrashLooping`, `demo`/`orders`, with a `pod` label | 200 | New issue `KubePodCrashLooping on ic-target/demo/Deployment/orders`. The body lists the Signal's name, severity, start time, and source link. |
+| 1 | `KubePodCrashLooping`, `demo`/`orders`, with a `pod` label | 200 | New issue `[critical] KubePodCrashLooping on ic-target/demo/Deployment/orders`, led by the highest severity among its firing Signals. The body lists the Signal's name, severity, start time, and source link. |
 | 2 | A different Alert for the same `namespace` and `deployment` | 200 | One comment on that issue, `Signal joined: …`. No new issue. |
 | 3 | Alert 1 again: same fingerprint and `startsAt` | 200 | Nothing. A repeat notice only updates last-seen. |
 | 4 | `KubePodCrashLooping`, `demo`/`inventory` | 200 | A second issue, for `ic-target/demo/Deployment/inventory`. |
-| 5 | `KubePodNotReady` with only a `pod` label | 200 | A third issue, `KubePodNotReady (ic-target-alertmanager/5c4d3e2f1a0b9c8d)`. Its body says Target: none. No Deployment is guessed from the pod name. |
+| 5 | `KubePodNotReady` with only a `pod` label | 200 | A third issue, `[warning] KubePodNotReady (ic-target-alertmanager/5c4d3e2f1a0b9c8d)`. Its body says Target: none. No Deployment is guessed from the pod name. |
 | 6 | Wrong bearer token | 401 | Nothing. |
 
 No issue body or comment may contain `MANUAL-TEST-ANNOTATION`.

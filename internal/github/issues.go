@@ -1,6 +1,6 @@
 // Package github is the GitHub Issues ticketing adapter: one issue per
 // Incident, with later Signals as comments. A ticket reference is the issue
-// number.
+// number, and the issue's state is the Incident's human-facing state.
 package github
 
 import (
@@ -31,7 +31,7 @@ func (g *Issues) Create(ctx context.Context, title, body string) (string, error)
 	var out struct {
 		Number int `json:"number"`
 	}
-	if err := g.post(ctx, "/repos/"+g.repo+"/issues", map[string]string{"title": title, "body": body}, &out); err != nil {
+	if err := g.do(ctx, http.MethodPost, "/repos/"+g.repo+"/issues", map[string]string{"title": title, "body": body}, &out); err != nil {
 		return "", fmt.Errorf("github: create issue: %w", err)
 	}
 	return strconv.Itoa(out.Number), nil
@@ -39,15 +39,56 @@ func (g *Issues) Create(ctx context.Context, title, body string) (string, error)
 
 // Comment adds a comment to issue ref.
 func (g *Issues) Comment(ctx context.Context, ref, body string) error {
-	if err := g.post(ctx, "/repos/"+g.repo+"/issues/"+ref+"/comments", map[string]string{"body": body}, nil); err != nil {
+	if err := g.do(ctx, http.MethodPost, "/repos/"+g.repo+"/issues/"+ref+"/comments", map[string]string{"body": body}, nil); err != nil {
 		return fmt.Errorf("github: comment on issue %s: %w", ref, err)
 	}
 	return nil
 }
 
-func (g *Issues) post(ctx context.Context, path string, in map[string]string, out any) error {
-	b, _ := json.Marshal(in) // a map of strings always marshals
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.apiURL+path, bytes.NewReader(b))
+// State reports whether issue ref is closed, and GitHub's reason when it is
+// (completed, or not_planned for a cancelled one).
+func (g *Issues) State(ctx context.Context, ref string) (closed bool, reason string, err error) {
+	var out struct {
+		State       string  `json:"state"`
+		StateReason *string `json:"state_reason"`
+	}
+	if err := g.do(ctx, http.MethodGet, "/repos/"+g.repo+"/issues/"+ref, nil, &out); err != nil {
+		return false, "", fmt.Errorf("github: read issue %s: %w", ref, err)
+	}
+	if out.State != "closed" {
+		return false, "", nil
+	}
+	if out.StateReason != nil {
+		reason = *out.StateReason
+	}
+	return true, reason, nil
+}
+
+// Close closes issue ref as completed.
+func (g *Issues) Close(ctx context.Context, ref string) error {
+	if err := g.do(ctx, http.MethodPatch, "/repos/"+g.repo+"/issues/"+ref, map[string]string{"state": "closed", "state_reason": "completed"}, nil); err != nil {
+		return fmt.Errorf("github: close issue %s: %w", ref, err)
+	}
+	return nil
+}
+
+// SetTitle changes the title of issue ref.
+func (g *Issues) SetTitle(ctx context.Context, ref, title string) error {
+	if err := g.do(ctx, http.MethodPatch, "/repos/"+g.repo+"/issues/"+ref, map[string]string{"title": title}, nil); err != nil {
+		return fmt.Errorf("github: retitle issue %s: %w", ref, err)
+	}
+	return nil
+}
+
+// do sends in (nothing when nil) and decodes the answer into out (unless
+// nil). A POST must answer 201 Created, anything else 200 OK.
+func (g *Issues) do(ctx context.Context, method, path string, in map[string]string, out any) error {
+	var body io.Reader
+	if in != nil {
+		b, _ := json.Marshal(in) // a map of strings always marshals
+		body = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, g.apiURL+path, body)
 	if err != nil {
 		return err
 	}
@@ -61,7 +102,11 @@ func (g *Issues) post(ctx context.Context, path string, in map[string]string, ou
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusCreated {
+	want := http.StatusOK
+	if method == http.MethodPost {
+		want = http.StatusCreated
+	}
+	if resp.StatusCode != want {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("status %d: %s", resp.StatusCode, bytes.TrimSpace(msg))
 	}
