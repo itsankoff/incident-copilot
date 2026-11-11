@@ -61,7 +61,7 @@ lint: ## Run golangci-lint (config in .golangci.yml)
 tools: ## Check that required tools are installed
 	@ok=1; \
 	for t in docker kind kubectl helm go; do \
-	  command -v $$t >/dev/null || { echo "missing: $$t (brew install $$t)"; ok=0; }; \
+	  command -v $$t >/dev/null || { echo "missing: $$t (macOS: brew install $$t; Linux: see README Prerequisites)"; ok=0; }; \
 	done; \
 	[ $$ok = 1 ] || exit 1; \
 	docker info >/dev/null 2>&1 || { echo "docker daemon is not running"; exit 1; }; \
@@ -75,7 +75,7 @@ tools: ## Check that required tools are installed
 	  k9v=$$(k9s version -s | awk '/^Version/ {print $$2}'); \
 	  printf '%s\n%s\n' "$(K9S_MIN_VERSION)" "$$k9v" | sort -V -C || echo "warning: k9s $$k9v < $(K9S_MIN_VERSION)"; \
 	else \
-	  echo "optional: k9s not found, needed only for make k9s (brew install k9s)"; \
+	  echo "optional: k9s not found, needed only for make k9s (macOS: brew install k9s; Linux: see README Prerequisites)"; \
 	fi; \
 	echo "tools ok (go $$gv, kind $$kv, helm $$(helm version --short))"
 
@@ -220,7 +220,7 @@ CLUSTER ?= target
 
 .PHONY: k9s
 k9s: ## Open k9s on a cluster (CLUSTER=target, the default, or CLUSTER=cp)
-	@command -v k9s >/dev/null || { echo "missing: k9s (brew install k9s)"; exit 1; }
+	@command -v k9s >/dev/null || { echo "missing: k9s (macOS: brew install k9s; Linux: see README Prerequisites)"; exit 1; }
 	@case "$(CLUSTER)" in \
 	  target) exec k9s --context kind-$(TARGET_CLUSTER) ;; \
 	  cp)     exec k9s --context kind-$(CONTROL_PLANE_CLUSTER) ;; \

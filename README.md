@@ -147,7 +147,19 @@ The full topology, with namespaces and networking, is in [`docs/design/demo-envi
 | [k9s](https://k9scli.io) (optional) | 0.50+ | `make k9s` |
 | [jq](https://jqlang.org) (optional) | Any | The manual tests in [`docs/manual-tests`](docs/manual-tests) |
 
-On macOS: `brew install go kind kubectl helm k9s jq`, and `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2`. The pinned versions live in [`deploy/versions.env`](deploy/versions.env), and `make tools` checks them.
+On macOS, install most of them with Homebrew: `brew install go kind kubectl helm k9s jq golangci-lint`. Homebrew's golangci-lint may not match the pinned version, so for that one prefer the `go install` line below.
+
+On Linux, use each tool's official install method, which does not depend on your distro:
+
+- Go: the [official tarball](https://go.dev/doc/install).
+- Docker: [Docker Engine](https://docs.docker.com/engine/install/) for your distro.
+- kind: the release binary, `curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') && chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind`.
+- kubectl: [install kubectl on Linux](https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/).
+- Helm: [installing Helm](https://helm.sh/docs/intro/install/).
+- k9s: a release binary or package from the [k9s releases](https://github.com/derailed/k9s/releases), or see [k9s installation](https://k9scli.io/topics/install/).
+- jq: [download jq](https://jqlang.org/download/).
+
+On both, install golangci-lint with `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2`. The pinned versions live in [`deploy/versions.env`](deploy/versions.env), and `make tools` checks them.
 
 ### Run it
 
@@ -160,7 +172,7 @@ make control-plane # build the incident-copilot image and deploy the Control pla
 make port-forward  # ic-target's Prometheus :9090, Alertmanager :9093, Loki API :3100, Grafana :3000
                    # (Grafana is on by default: make cluster GRAFANA=0 or make observability GRAFANA=0 to disable it. Loki has no UI of its own.)
 make status        # pods in both clusters
-make k9s           # browse ic-target in k9s (CLUSTER=cp for ic-control-plane; brew install k9s)
+make k9s           # browse ic-target in k9s (CLUSTER=cp for ic-control-plane)
 make down          # delete both clusters
 ```
 
