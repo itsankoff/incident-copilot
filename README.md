@@ -147,7 +147,7 @@ The full topology, with namespaces and networking, is in [`docs/design/demo-envi
 | [k9s](https://k9scli.io) (optional) | 0.50+ | `make k9s` |
 | [jq](https://jqlang.org) (optional) | Any | The manual tests in [`docs/manual-tests`](docs/manual-tests) |
 
-On macOS, install most of them with Homebrew: `brew install go kind kubectl helm k9s jq golangci-lint`. Homebrew's golangci-lint may not match the pinned version, so for that one prefer the `go install` line below.
+On macOS, install most of them with Homebrew: `brew install go kind kubectl helm k9s jq`. golangci-lint is pinned, so install it with the `go install` line below.
 
 On Linux, use each tool's official install method, which does not depend on your distro:
 
