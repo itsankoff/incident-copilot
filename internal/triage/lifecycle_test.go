@@ -292,25 +292,25 @@ func TestLifecycle(t *testing.T) {
 			},
 		},
 		{
-			name: "no Target: keyed by key through resolve, reopen, close, and recurrence",
+			name: "no Target: keyed by source and name through resolve, reopen, close, and recurrence",
 			steps: []step{
 				{at: 0, sig: podOnly, want: []Kind{Open}},
 				{at: 10 * time.Minute, want: []Kind{Resolve}},
 				{at: 20 * time.Minute, sig: sig("am/ppp", "PodNotReady", nil, t0.Add(20*time.Minute)), want: []Kind{Reopen}},
 				{at: 21 * time.Minute, sig: resolved(sig("am/ppp", "PodNotReady", nil, t0.Add(20*time.Minute))), want: []Kind{Resolve}},
-				{at: 22 * time.Minute, sig: sig("am/qqq", "PodNotReady", nil, t0.Add(22*time.Minute)), want: []Kind{Open}},
+				{at: 22 * time.Minute, sig: sig("am/qqq", "KubePodNotReady", nil, t0.Add(22*time.Minute)), want: []Kind{Open}},
 				{at: 25*time.Hour + 21*time.Minute, want: []Kind{Close, Resolve}},
 				{at: 25*time.Hour + 22*time.Minute, sig: sig("am/ppp", "PodNotReady", nil, t0.Add(25*time.Hour)), want: []Kind{Open}},
 			},
 			check: func(t *testing.T, w *world) {
 				first := w.get(1)
-				if first.Target != nil || first.Key != "am/ppp" || first.State != StateClosed || first.Outcome != OutcomeResolved {
+				if first.Target != nil || first.Key != "am/PodNotReady" || first.State != StateClosed || first.Outcome != OutcomeResolved {
 					t.Errorf("first: %+v", first)
 				}
-				if other := w.get(2); other.Key != "am/qqq" || other.State != StateResolved || other.Outcome != OutcomeExpired {
-					t.Errorf("other key: %+v", other)
+				if other := w.get(2); other.Key != "am/KubePodNotReady" || other.State != StateResolved || other.Outcome != OutcomeExpired {
+					t.Errorf("other name: %+v", other)
 				}
-				if rec := w.get(3); rec.Key != "am/ppp" || rec.RecurrenceOf != 1 {
+				if rec := w.get(3); rec.Key != "am/PodNotReady" || rec.RecurrenceOf != 1 {
 					t.Errorf("recurrence: %+v", rec)
 				}
 			},
