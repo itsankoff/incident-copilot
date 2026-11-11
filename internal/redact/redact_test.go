@@ -51,6 +51,7 @@ func TestString(t *testing.T) {
 		{"GCS signed URL", "https://storage.googleapis.com/b/o?X-Goog-Signature=0a1b2c#frag", "https://storage.googleapis.com/b/o?X-Goog-Signature=[REDACTED]#frag"},
 		{"password in a URL", "dial postgres://orders:hunter2@db.demo:5432/orders failed", "dial postgres://orders:[REDACTED]@db.demo:5432/orders failed"},
 		{"Slack bot token, from the vendored rules", "--slack=" + slackBot, "--slack=[REDACTED]"},
+		{"vendored secret holding a placeholder word", "--slack=" + slackBot + "False", "--slack=[REDACTED]"},
 		{"password in a URL with an empty user", "dial tcp: redis://:Rk9pX2s3cretPa55@redis.demo:6379/0: connection refused", "dial tcp: redis://:[REDACTED]@redis.demo:6379/0: connection refused"},
 		{"already redacted stays the same", "password=[REDACTED] Bearer [REDACTED]", "password=[REDACTED] Bearer [REDACTED]"},
 		{"basic auth header", "unexpected status from HEAD request, Authorization: Basic dXNlcjpodW50ZXIyMDI2IQ== (401)",
@@ -135,8 +136,8 @@ func TestJSONReplacesValuesUnderSensitiveNames(t *testing.T) {
 }
 
 func TestJSONReplacesDockerConfigAuth(t *testing.T) {
-	in := json.RawMessage(`{"auths":{"registry.demo":{"auth":"b3JkZXJzOmdocF9GYWtlRmFrZUZha2U=","username":"orders"}},"author":"dev","oauth_url":"https://idp.demo/authorize"}`)
-	want := `{"author":"dev","auths":{"registry.demo":{"auth":"[REDACTED]","username":"orders"}},"oauth_url":"https://idp.demo/authorize"}`
+	in := json.RawMessage(`{"auths":{"registry.demo":{"auth":"b3JkZXJzOmdocF9GYWtlRmFrZUZha2U=","username":"orders"}},"author":"dev","oauth_url":"https://idp.demo/authorize","proxy":{"auth":"enabled"}}`)
+	want := `{"author":"dev","auths":{"registry.demo":{"auth":"[REDACTED]","username":"orders"}},"oauth_url":"https://idp.demo/authorize","proxy":{"auth":"enabled"}}`
 	if out := string(JSON(in)); out != want {
 		t.Errorf("JSON(%s)\n got %s\nwant %s", in, out, want)
 	}

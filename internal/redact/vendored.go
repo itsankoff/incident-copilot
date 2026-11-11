@@ -14,17 +14,17 @@ type vendoredRule struct {
 	re       string
 	group    int      // the capture group holding the secret; 0 means the first non-empty group, else the whole match
 	keywords []string // the rule runs only on text holding one, ignoring case
-	// A match is not a secret when its entropy is at most minEntropy (below
-	// it, when orEqual) or it matches a deny regex.
-	minEntropy float64
-	orEqual    bool
-	deny       []string
+	// A secret must have entropy above minEntropy (at least minEntropy, when
+	// minInclusive) and match no deny regex.
+	minEntropy   float64
+	minInclusive bool
+	deny         []string
 }
 
 type compiledRule struct {
 	*vendoredRule
-	re   *regexp.Regexp
-	deny []*regexp.Regexp
+	match     *regexp.Regexp
+	denyMatch []*regexp.Regexp
 }
 
 var (
@@ -40,9 +40,9 @@ func init() {
 	var words []string
 	for i := range vendoredRules {
 		r := &vendoredRules[i]
-		c := compiledRule{vendoredRule: r, re: regexp.MustCompile(r.re)}
+		c := compiledRule{vendoredRule: r, match: regexp.MustCompile(r.re)}
 		for _, d := range r.deny {
-			c.deny = append(c.deny, regexp.MustCompile(d))
+			c.denyMatch = append(c.denyMatch, regexp.MustCompile(d))
 		}
 		rules = append(rules, c)
 		if len(r.keywords) == 0 {
@@ -81,7 +81,7 @@ func redactVendored(s string) string {
 	var spans []span
 	for _, i := range candidates {
 		r := &rules[i]
-		for _, m := range r.re.FindAllStringSubmatchIndex(s, -1) {
+		for _, m := range r.match.FindAllStringSubmatchIndex(s, -1) {
 			start, end := r.secret(m)
 			if sec := s[start:end]; sec != "" && sec != Marker && r.isSecret(sec) {
 				spans = append(spans, span{start, end})
@@ -127,11 +127,11 @@ func (r *compiledRule) secret(m []int) (start, end int) {
 // isSecret applies the rule's filters, and the global one, to a match.
 func (r *compiledRule) isSecret(sec string) bool {
 	if r.minEntropy > 0 {
-		if e := entropy(sec); e < r.minEntropy || e == r.minEntropy && !r.orEqual {
+		if e := entropy(sec); e < r.minEntropy || e == r.minEntropy && !r.minInclusive {
 			return false
 		}
 	}
-	for _, d := range r.deny {
+	for _, d := range r.denyMatch {
 		if d.MatchString(sec) {
 			return false
 		}
@@ -161,8 +161,9 @@ func entropy(s string) float64 {
 	return h
 }
 
-// keywordMatcher finds keywords in text in one pass, ignoring ASCII case: an
-// Aho-Corasick automaton over only the bytes keywords use (class 0 stands for
+// keywordMatcher finds keywords in text in one pass, ignoring ASCII case,
+// where a strings.Contains per keyword would read the text once for each of
+// some 450 keywords. It is an Aho-Corasick automaton over only the bytes keywords use (class 0 stands for
 // every other byte), which keeps its table small.
 type keywordMatcher struct {
 	class   [256]byte

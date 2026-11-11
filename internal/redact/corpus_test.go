@@ -35,8 +35,8 @@ var (
 // from the same places that hold no secret.
 var corpus = []struct {
 	name    string
-	json    bool     // run through JSON, else String
-	in      string   //
+	json    bool // run through JSON, else String
+	in      string
 	secrets []string // each must be gone from the output
 	// outOfScope marks a secret no rule catches yet: an opaque token with no
 	// key name, or a bare password. Context rules for them come later.

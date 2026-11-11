@@ -40,11 +40,6 @@ var patterns = []*regexp.Regexp{
 
 var isSensitiveName = regexp.MustCompile(`(?i)^` + sensitiveName + `$`)
 
-// secretKeys are JSON keys whose value is a secret although sensitiveName
-// does not match them: "auth" holds base64 user:password in a
-// dockerconfigjson. They match exactly, so "author" and "oauth_url" do not.
-var secretKeys = map[string]bool{"auth": true}
-
 // String returns s with every secret replaced by Marker: first by our own
 // patterns, then by the provider rules vendored from betterleaks.
 func String(s string) string {
@@ -117,9 +112,20 @@ func redactValue(v any) (any, bool) {
 		return v, changed
 	case map[string]any:
 		changed := false
+		// A dockerconfigjson maps each registry under "auths" to credentials
+		// whose "auth" is base64 user:password.
+		if auths, ok := v["auths"].(map[string]any); ok {
+			for _, creds := range auths {
+				if c, ok := creds.(map[string]any); ok {
+					if s, ok := c["auth"].(string); ok && s != Marker {
+						c["auth"], changed = Marker, true
+					}
+				}
+			}
+		}
 		name, _ := v["name"].(string)
 		for k, e := range v {
-			if s, ok := e.(string); ok && s != Marker && (isSensitiveName.MatchString(k) || secretKeys[k] || k == "value" && isSensitiveName.MatchString(name)) {
+			if s, ok := e.(string); ok && s != Marker && (isSensitiveName.MatchString(k) || k == "value" && isSensitiveName.MatchString(name)) {
 				v[k], changed = Marker, true
 				continue
 			}

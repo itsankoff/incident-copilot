@@ -59,7 +59,7 @@ lint: ## Run golangci-lint (config in .golangci.yml)
 
 .PHONY: redact-rules
 redact-rules: ## Regenerate internal/redact/rules_gen.go from betterleaks $(BETTERLEAKS_VERSION) (pinned in deploy/versions.env)
-	go -C internal/redact/gen run . -version $(BETTERLEAKS_VERSION) -out ../rules_gen.go
+	go -C internal/redact/gen run . -version $(BETTERLEAKS_VERSION) -commit $(BETTERLEAKS_COMMIT) -out ../rules_gen.go
 	go test ./internal/redact
 
 .PHONY: tools
