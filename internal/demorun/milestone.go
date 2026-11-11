@@ -103,7 +103,10 @@ func (m Milestone) step() string {
 		return failed
 	}
 	prefix := "step " + m.Str("step") + ": "
-	if tool := m.Str("tool"); tool != "" {
+	// submit_rca is how the LLM hands in its RCA, not an Evidence query.
+	if tool := m.Str("tool"); tool == "submit_rca" {
+		return prefix + "the LLM " + verdict("submitted its RCA", "sent an RCA that could not be read")
+	} else if tool != "" {
 		return prefix + "Evidence query " + tool + " " + verdict("ok", "failed")
 	}
 	if model, ok := m.Fields["llm"].(string); ok && model != "" {

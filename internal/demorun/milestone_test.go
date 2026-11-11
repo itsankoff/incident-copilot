@@ -46,6 +46,10 @@ func TestMilestoneRendersEachContractLine(t *testing.T) {
 			"step 3: Evidence query events failed",
 		},
 		{
+			`{"time":"2026-11-11T13:10:58Z","level":"INFO","msg":"investigation.step","incident":3,"step":5,"tool":"submit_rca","ok":true}`,
+			"step 5: the LLM submitted its RCA",
+		},
+		{
 			`{"time":"2026-11-11T10:00:40Z","level":"INFO","msg":"investigation.finished","incident":3,"confidence":"medium","steps":4,"duration":"38.5s"}`,
 			"Investigation finished: confidence medium after 4 steps in 38.5s",
 		},

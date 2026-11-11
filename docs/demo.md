@@ -85,23 +85,34 @@ After the fault, one stream shows what each source says, with minutes and second
 | `control-plane` | The Signal received, Triage opening or joining an Incident, the ticket, the investigation's start, each LLM and Evidence step, its end, the RCA written, and the ticket ready for review | The Control plane's own log |
 | `sensor` | The Sensor's link to the Control plane going up or down | The Sensor's own log |
 
-A crash-loop run looks like this. The times vary from run to run:
+A crash-loop run looks like this, from a real run. The times, and the free models that answer, vary from run to run:
 
 ```text
   +0:00  fault         rolled out to orders: "orders: pin order TTL in the manifest"
-  +0:05  kubernetes    pod orders-5d8c7b9f4-x2x8k: Error, last exit Error (code 1), 1 restart
-  +0:20  kubernetes    pod orders-5d8c7b9f4-x2x8k: CrashLoopBackOff, last exit Error (code 1), 2 restarts
-  +1:15  alertmanager  Alertmanager: PodCrashLooping firing for demo/orders
-  +1:25  control-plane Control plane received Signal PodCrashLooping from ic-target-alertmanager about ...
-  +1:25  control-plane Triage opened Incident 1
-  +1:25  control-plane Ticket 1 created (local ticketing)
-  +1:25  control-plane Investigation started with openrouter/free (budget: 8 steps, 100000 tokens, 5m0s)
-  +1:31  control-plane   step 1: LLM nvidia/... answered
-  +1:32  control-plane   step 2: Evidence query workload_state ok
+  +0:00  kubernetes    pod orders-dc784ff9-vcq84: Pending
+  +0:06  kubernetes    pod orders-dc784ff9-vcq84: CrashLoopBackOff, last exit Error (code 1), 1 restart
+  +0:18  kubernetes    pod orders-dc784ff9-vcq84: CrashLoopBackOff, last exit Error (code 1), 2 restarts
+  +0:42  kubernetes    pod orders-dc784ff9-vcq84: CrashLoopBackOff, last exit Error (code 1), 3 restarts
+  +1:27  kubernetes    pod orders-dc784ff9-vcq84: CrashLoopBackOff, last exit Error (code 1), 4 restarts
+  +2:10  alertmanager  Alertmanager: PodCrashLooping firing for demo/orders
+  +2:16  control-plane Control plane received Signal PodCrashLooping from alertmanager/ic-target-alertmanager about ic-target/demo/Deployment/orders
+  +2:16  control-plane Triage opened Incident 3
+  +2:16  control-plane Ticket 1 created (local ticketing)
+  +2:16  control-plane Investigation started with openrouter/free (budget: 8 steps, 100000 tokens, 5m0s)
+  +2:20  control-plane   step 1: LLM nvidia/nemotron-3-ultra-550b-a55b:free answered
+  +2:20  control-plane   step 1: Evidence query workload_state ok
+  +2:25  alertmanager  Alertmanager: DeploymentRolloutStuck firing for demo/orders
+  +2:26  control-plane   step 2: LLM liquid/lfm-3-1.7b:free answered
+  +2:26  control-plane   step 2: Evidence query events ok
   ...
-  +2:10  control-plane Investigation finished: confidence medium after 4 steps in 45s
-  +2:10  control-plane RCA written to ticket 1
-  +2:10  control-plane Ticket 1 is ready for review
+  +2:31  control-plane Control plane received Signal DeploymentRolloutStuck from alertmanager/ic-target-alertmanager about ic-target/demo/Deployment/orders
+  +2:31  control-plane Triage joined the Signal to open Incident 3
+  +2:31  control-plane Ticket 1 commented: signal (local ticketing)
+  +3:10  control-plane   step 5: LLM nvidia/nemotron-3.5-lightning:free answered
+  +3:10  control-plane   step 5: the LLM submitted its RCA
+  +3:10  control-plane Investigation finished: confidence low after 5 steps in 53.844s
+  +3:10  control-plane RCA written to ticket 1
+  +3:10  control-plane Ticket 1 is ready for review
 ```
 
 Then the runner prints the ticket's URL and the RCA, and offers to clean up.

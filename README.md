@@ -6,7 +6,9 @@ It is written in Go, calls LLM APIs directly with tool calling (no agent framewo
 
 > **Status:** early development, actively worked on. Progress is tracked on the [project board](https://github.com/users/itsankoff/projects/1) (Backlog → AFK Ready / Need Human → In Progress → In Review → Done). The design below is the target; see [Roadmap](#roadmap) for what is implemented.
 
-<!-- demo-rca-screenshot -->
+**A real RCA from `make demo`.** A rollout broke `orders` with a malformed config value. incident-copilot opened a ticket and investigated the cluster, and Gate 1 checked every claim's citations. It caught one that cites no other claim, and capped the confidence at `low`:
+
+<img src="docs/images/demo-rca.png" alt="The local ticket page for PodCrashLooping on ic-target/demo/Deployment/orders: the Signals, a joined DeploymentRolloutStuck Signal, and a Root-cause analysis whose claims cite workload_state and events Evidence queries, with one claim failing Gate 1 and the confidence capped at low" width="720">
 
 ![incident-copilot architecture: alerts and Detectors come in, the Control plane investigates with an LLM, Runbooks, and read-only evidence, and writes an RCA to your ticket and Advice that a human approves before the Executor runs it](docs/images/architecture.svg)
 

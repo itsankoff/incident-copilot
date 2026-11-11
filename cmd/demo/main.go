@@ -616,7 +616,11 @@ func (r *runner) fetchRCA(ctx context.Context, f *demorun.Follow, url string) st
 func (r *runner) cleanup(ctx context.Context) error {
 	ui := r.ui
 	ui.Section("Next")
-	ui.Note("docs/demo.md explains how to read the RCA and the audit log. Try another fault: make demo F=oom.",
+	other := "oom"
+	if r.scenario.Name == other {
+		other = "crash-loop"
+	}
+	ui.Note("docs/demo.md explains how to read the RCA and the audit log. Try another fault: make demo F="+other+".",
 		"Grafana, Prometheus, and Alertmanager: run make port-forward, then open http://localhost:3000.")
 	if ui.Ask("Restore the demo app's healthy baseline now (make clear)?", false) {
 		if err := r.make(ctx, "clear", "restoring the demo app's baseline", "The demo app is healthy"); err != nil {
