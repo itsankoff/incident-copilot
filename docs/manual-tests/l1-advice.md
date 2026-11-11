@@ -9,6 +9,8 @@ Two scenarios are covered by seam tests only and are never run live, because a r
 - a model that names another workload as the target, or states a level, gains nothing;
 - Advice that fails Gate 1 is not offered for approval.
 
+Advice also follows the Incident lifecycle as the RCA does. If a human closes the ticket after the RCA is posted, the Advice is not posted and `remediation.cancelled` says why. That was added when this branch was rebased onto the lifecycle (#45), after the live run, so it too is covered by seam tests only. The lifecycle manual test checks the RCA side.
+
 See `internal/controlplane/advice_test.go`. Every other step below was run live on the demo clusters, with real GitHub ticketing and a real model, before the PR for #56. The no-mistakes pipeline's own validation did not run this end-to-end path: it does not use those credentials and stays off the shared clusters.
 
 ## Before you start
@@ -17,7 +19,7 @@ See `internal/controlplane/advice_test.go`. Every other step below was run live 
 - `.env.demo` sets `IC_GITHUB_REPO`, `IC_GITHUB_TOKEN`, and `OPENROUTER_API_KEY`, so tickets are real GitHub issues and the RCA and remediation loops use a real model.
 - `jq` and `gh` are installed. Run every command from the repository root, in bash, in one shell.
 
-Each new Incident opens a real issue in the tickets repository. Incidents never close yet (#45), so a Target with an open Incident only gets comments. Steps 3 to 6 need four Targets with no Incident: `orders`, `inventory`, `loadgen`, and a pod-only key. On clusters that have been used before, reset the Control plane's state first (step 1). That deletes its Incidents and audit log.
+Each new Incident opens a real issue in the tickets repository. An Incident keeps its Target until it closes, 24 hours after it resolves or when a human closes its ticket, so a later Alert on that Target only adds comments. Steps 3 to 6 need four Targets with no Incident: `orders`, `inventory`, `loadgen`, and a pod-only key. On clusters that have been used before, reset the Control plane's state first (step 1). That deletes its Incidents and audit log.
 
 ## 1. Deploy, and reset the Control plane's state if needed
 
@@ -158,4 +160,4 @@ kill %1   # the port-forward
 
 To go back to a build without the Executor role, delete it first, or it crash-loops: `sen delete deployment/executor` and its `incident-copilot-executor-*` Secret.
 
-The issues the test opened stay open in the tickets repository. Close them there if you like; the Control plane does not read their state yet (#45).
+The issues the test opened close 24 hours after their Alerts resolve. To close one sooner, close it in the tickets repository: the Control plane closes its Incident at the next Sweep.

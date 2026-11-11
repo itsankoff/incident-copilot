@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"net/http"
@@ -319,5 +320,75 @@ func TestAnAdvertisedActionThatWasNotReviewedIsNotOffered(t *testing.T) {
 	body := h.adviceComment("1")
 	if !strings.Contains(body, "**Escalate:** the Executor of Location prod offers no Action that matches a reviewed declaration") || strings.Contains(body, "delete namespace") {
 		t.Errorf("an unreviewed Action was offered:\n%s", body)
+	}
+}
+
+// Advice follows the Incident lifecycle (#45) as the RCA does: it is never
+// posted on a closed ticket.
+func TestAdviceIsNotPostedOnATicketClosedWhileItWasDrafted(t *testing.T) {
+	var h *harness
+	model := remediate(t, func(_, ref string) string {
+		h.tickets.closeByHuman("1", "not_planned")
+		return rollbackTo(ref)
+	})
+	h = startAdvice(t, model)
+	h.send(tokenProd, alert("KubePodCrashLooping", "aaa", orders))
+	h.cp.Wait()
+
+	if c := h.tickets.commentsOn("1"); len(c) != 1 || !strings.HasPrefix(c[0], "## Root-cause analysis") {
+		t.Fatalf("comments %q, want the RCA only", c)
+	}
+	log := h.auditLog()
+	cancelled := ofType(log, "remediation.cancelled")
+	if len(cancelled) != 1 || !strings.Contains(string(cancelled[0].Data), "closed by a human (not_planned)") {
+		t.Errorf("remediation.cancelled %+v, want one saying why", cancelled)
+	}
+	if n := len(ofType(log, "remediation.finished")); n != 1 {
+		t.Errorf("%d remediation.finished, want 1: the loop ran to its end", n)
+	}
+}
+
+// adviceBlockingLLM answers the RCA loop as next does, then blocks the
+// remediation loop until its context is cancelled, after closing started.
+type adviceBlockingLLM struct {
+	next    llm.Client
+	started chan struct{}
+}
+
+func (b *adviceBlockingLLM) Complete(ctx context.Context, req llm.Request) (llm.Response, error) {
+	if req.Tools[len(req.Tools)-1].Name != "submit_advice" {
+		return b.next.Complete(ctx, req)
+	}
+	close(b.started)
+	<-ctx.Done()
+	return llm.Response{}, ctx.Err()
+}
+
+func TestClosingTheIncidentCancelsTheRemediationLoop(t *testing.T) {
+	model := &adviceBlockingLLM{next: remediate(t, func(_, ref string) string { return rollbackTo(ref) }), started: make(chan struct{})}
+	h := startAdvice(t, model)
+	h.send(tokenProd, alert("KubePodCrashLooping", "aaa", orders))
+	select {
+	case <-model.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the remediation loop never asked the LLM")
+	}
+
+	h.tickets.closeByHuman("1", "completed")
+	h.sweep()
+	h.cp.Wait()
+
+	if c := h.tickets.commentsOn("1"); len(c) != 1 || !strings.HasPrefix(c[0], "## Root-cause analysis") {
+		t.Fatalf("comments %q, want the RCA only", c)
+	}
+	log := h.auditLog()
+	cancelled := ofType(log, "remediation.cancelled")
+	if len(cancelled) != 1 || cancelled[0].Incident != 1 || !strings.Contains(string(cancelled[0].Data), "closed by a human") {
+		t.Fatalf("remediation.cancelled %+v, want one saying why", cancelled)
+	}
+	for _, typ := range []string{"remediation.finished", "gate1.advice", "advice.decided"} {
+		if n := len(ofType(log, typ)); n != 0 {
+			t.Errorf("%d %s after the cancel", n, typ)
+		}
 	}
 }

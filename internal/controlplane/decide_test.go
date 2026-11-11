@@ -12,7 +12,7 @@ import (
 
 var decideTarget = &signal.Target{Platform: "kubernetes", Location: "prod", Namespace: "demo", Kind: "Deployment", Name: "orders"}
 
-func withSeverity(inc triage.Incident, s signal.Severity) triage.Incident {
+func incidentWithSeverity(inc triage.Incident, s signal.Severity) triage.Incident {
 	inc.Members = []triage.Member{{Key: "am/x", Name: "KubePodCrashLooping", Severity: s}}
 	return inc
 }
@@ -61,7 +61,7 @@ func TestDecideIsNeverAboveAnyInput(t *testing.T) {
 						n++
 						in := DecideInput{Incident: triage.Incident{Target: target}, Environment: c.env, Policy: c.policy, KillSwitch: k.ks, Confidence: conf, Guards: guards}
 						name := fmt.Sprintf("%s/%+v/%s/%s/target=%v", c.name, k.ks, conf, gname, target != nil)
-						in.Incident = withSeverity(in.Incident, signal.Critical)
+						in.Incident = incidentWithSeverity(in.Incident, signal.Critical)
 						d := Decide(in)
 
 						bounds := map[string]Level{"ceiling": c.max, "kill switch": k.max, "confidence": confMax, "version": L2}
@@ -84,7 +84,7 @@ func TestDecideIsNeverAboveAnyInput(t *testing.T) {
 							t.Errorf("%s: level %s has no cap explaining it: %+v", name, d.Level, d.Caps)
 						}
 						for _, s := range []signal.Severity{signal.Warning, signal.Info, signal.Unknown} {
-							in.Incident = withSeverity(in.Incident, s)
+							in.Incident = incidentWithSeverity(in.Incident, s)
 							if other := Decide(in); !reflect.DeepEqual(other, d) {
 								t.Errorf("%s: severity %s changed the decision: %+v, want %+v", name, s, other, d)
 							}

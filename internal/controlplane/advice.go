@@ -319,6 +319,11 @@ func (v *Investigator) advise(ctx context.Context, inc triage.Incident, rca *RCA
 		if err != nil {
 			return err
 		}
+		if ctx.Err() != nil {
+			return v.audit.Append(v.now(), "remediation.cancelled", inc.ID, map[string]any{
+				"reason": context.Cause(ctx).Error(), "steps": r.steps, "tokens": r.tokens,
+			})
+		}
 		run = &r
 		if err := v.audit.Append(v.now(), "remediation.finished", inc.ID, map[string]any{
 			"model": v.model, "answeredBy": r.models, "promptVersion": AdvicePromptVersion,
@@ -375,7 +380,21 @@ func (v *Investigator) advise(ctx context.Context, inc triage.Incident, rca *RCA
 		return err
 	}
 
-	if err := v.tickets.Comment(ctx, inc.TicketRef, v.renderAdvice(adv, failures, d, offered, ledger, run)); err != nil {
+	// As for the RCA, the ticket's state wins: Advice is never posted on a
+	// closed ticket.
+	closed, reason, err := v.tickets.State(ctx, inc.TicketRef)
+	if err == nil && closed {
+		return v.audit.Append(v.now(), "remediation.cancelled", inc.ID, map[string]any{
+			"reason": fmt.Sprintf("ticket %s was closed by a human (%s) before the Advice was posted", inc.TicketRef, reason),
+		})
+	}
+	if err == nil {
+		err = v.tickets.Comment(ctx, inc.TicketRef, v.renderAdvice(adv, failures, d, offered, ledger, run))
+	}
+	if err != nil {
+		if ctx.Err() != nil {
+			return v.audit.Append(v.now(), "remediation.cancelled", inc.ID, map[string]any{"reason": context.Cause(ctx).Error()})
+		}
 		return err
 	}
 	return v.audit.Append(v.now(), "ticket.commented", inc.ID, map[string]string{"ref": inc.TicketRef, "kind": "advice"})
