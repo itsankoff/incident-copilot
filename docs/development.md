@@ -4,10 +4,33 @@ How to build and test incident-copilot, and how to run the demo environment one 
 
 ## Prerequisites
 
-- Go 1.25+, Docker, [kind](https://kind.sigs.k8s.io), `kubectl`, and [Helm](https://helm.sh). On macOS: `brew install go kind kubectl helm`. `make tools` checks them against the versions pinned in [`deploy/versions.env`](../deploy/versions.env).
-- [golangci-lint](https://golangci-lint.run), at the pinned `GOLANGCI_LINT_VERSION`, for `make lint`.
-- `jq` and the `gh` CLI, for the manual tests.
-- For the clusters: Docker with 6 CPUs and 10 GB of memory, and 4 CPUs and 8 GB at the least.
+| Tool | Version | Needed for |
+|---|---|---|
+| [Go](https://go.dev) | 1.25+ | Building, testing, and `make fault` |
+| [Docker](https://docs.docker.com/get-docker/) | Any recent version, with 6 CPUs and 10 GB of memory allocated (4 CPUs and 8 GB at the least) | Images and the kind nodes |
+| [kind](https://kind.sigs.k8s.io) | v0.31.0 | The two clusters (Kubernetes v1.35.0 nodes) |
+| [kubectl](https://kubernetes.io/docs/tasks/tools/) | Within one minor version of v1.35 (v1.34 to v1.36) | Every cluster target |
+| [Helm](https://helm.sh) | v3+ | The observability stack |
+| [golangci-lint](https://golangci-lint.run) | v2.13.2 | `make lint` |
+| [k9s](https://k9scli.io) (optional) | 0.50+ | `make k9s` |
+| [jq](https://jqlang.org) (optional) | Any | The manual tests in [`docs/manual-tests`](manual-tests) |
+| [gh](https://cli.github.com) (optional) | Any | GitHub Issues ticketing, and the manual tests that use it |
+
+On macOS, install most of them with Homebrew: `brew install go kind kubectl helm k9s jq`. golangci-lint is pinned, so install it with the `go install` line below.
+
+On Linux, use each tool's official install method, which does not depend on your distro:
+
+- Go: the [official tarball](https://go.dev/doc/install).
+- Docker: [Docker Engine](https://docs.docker.com/engine/install/) for your distro.
+- kind: the release binary, `curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') && chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind`.
+- kubectl: [install kubectl on Linux](https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/).
+- Helm: [installing Helm](https://helm.sh/docs/intro/install/).
+- k9s: a release binary or package from the [k9s releases](https://github.com/derailed/k9s/releases), or see [k9s installation](https://k9scli.io/topics/install/).
+- jq: [download jq](https://jqlang.org/download/).
+
+On both, install golangci-lint with `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2`. The pinned versions live in [`deploy/versions.env`](../deploy/versions.env), and `make tools` checks them.
+
+`make demo` checks these for you and offers to install what is missing ([`docs/demo.md`](demo.md)).
 
 ## Build and test
 
@@ -29,6 +52,7 @@ make deploy          # build the demo-svc image and deploy orders, inventory, an
 make control-plane   # build the incident-copilot image and deploy the Control plane into ic-control-plane
 make sensor          # build the incident-copilot image and deploy the Sensor into ic-target
 make status          # pods in both clusters
+make k9s             # browse ic-target in k9s (CLUSTER=cp for ic-control-plane)
 make port-forward    # ic-target's Prometheus :9090, Alertmanager :9093, Loki API :3100, Grafana :3000
 make fault F=crash-loop   # roll out a fault scenario; no F lists them and their ground truth
 make clear           # restore the baseline; waits until all pods are Ready and no alerts fire
