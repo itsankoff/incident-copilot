@@ -48,7 +48,8 @@ if [ "$os" = Linux ]; then
 fi
 
 github=no
-if [ -f .env.demo ] && grep -qE '^IC_GITHUB_REPO=.+' .env.demo && grep -qE '^IC_GITHUB_TOKEN=.+' .env.demo; then github=yes; fi
+env_set() { grep -E "^$1=" .env.demo | tr -d '"' | grep -qvE '=$|\.\.\.$'; }
+if [ -f .env.demo ] && env_set IC_GITHUB_REPO && env_set IC_GITHUB_TOKEN; then github=yes; fi
 
 purpose() {
   case "$1" in

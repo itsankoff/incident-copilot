@@ -42,7 +42,7 @@ func newSandbox(t *testing.T, os_ string) *sandbox {
 	}
 	s.write(filepath.Join(s.root, "deploy/versions.env"), string(versions))
 	// The system tools the script itself uses.
-	for _, tool := range []string{"bash", "sed", "sort", "grep", "mkdir", "chmod", "rm", "tar", "basename", "cat"} {
+	for _, tool := range []string{"bash", "sed", "sort", "grep", "mkdir", "chmod", "rm", "tar", "basename", "cat", "tr"} {
 		p, err := exec.LookPath(tool)
 		if err != nil {
 			t.Fatalf("%s: %v", tool, err)
@@ -318,6 +318,19 @@ func TestBootstrapNeedsGhOnlyWithBothGitHubSettings(t *testing.T) {
 	s.write(filepath.Join(s.root, ".env.demo"), "IC_GITHUB_REPO=me/tickets\n")
 	if out, _, err := s.run(""); err != nil {
 		t.Fatalf("gh required without IC_GITHUB_TOKEN: %v\n%s", err, out)
+	}
+}
+
+func TestBootstrapIgnoresGitHubPlaceholders(t *testing.T) {
+	s := newSandbox(t, "Darwin")
+	s.write(filepath.Join(s.root, ".env.demo"), "IC_GITHUB_REPO=...\nIC_GITHUB_TOKEN=github_pat_...\n")
+	s.stub("brew", "")
+	out, _, err := s.run("")
+	if err != nil {
+		t.Fatalf("gh required for placeholder values: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "gh") {
+		t.Errorf("gh checked for placeholder values:\n%s", out)
 	}
 }
 
