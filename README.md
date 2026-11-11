@@ -6,6 +6,33 @@ It is written in Go, calls LLM APIs directly with tool calling (no agent framewo
 
 > **Status:** early development, actively worked on. Progress is tracked on the [project board](https://github.com/users/itsankoff/projects/1) (Backlog → AFK Ready / Need Human → In Progress → In Review → Done). The design below is the target; see [Roadmap](#roadmap) for what is implemented.
 
+## Overview
+
+![incident-copilot architecture: alerts and Detectors come in, the Control plane investigates with an LLM, Runbooks, and read-only evidence, and writes an RCA to your ticket and Advice that a human approves before the Executor runs it](docs/images/architecture.svg)
+
+## Try it yourself
+
+One command sets up two local Kubernetes clusters, rolls out a broken change, and follows incident-copilot from the alert to a cited RCA in a ticket. It runs on macOS and Linux, and needs Docker with 6 CPUs and 10 GB of memory (4 CPUs and 8 GB at the least) and a free [OpenRouter](https://openrouter.ai) key:
+
+```sh
+make demo            # or make demo F=oom
+```
+
+`make demo` checks the prerequisites and offers to install what is missing, asking first. It asks for the OpenRouter key if `.env.demo` has none. Tickets go to a local ticket page that the Control plane serves. That page is for the demo only: in production, incident-copilot writes to GitHub Issues. The first run takes about 15 minutes, most of it starting the clusters, and a run on existing clusters takes about 5.
+
+| `F=` | The broken rollout of `orders` | It fires |
+|---|---|---|
+| `crash-loop` (default) | A malformed config value | `PodCrashLooping`, `DeploymentRolloutStuck` |
+| `oom` | A memory limit below what it uses under load | `ContainerOOMKilled`, `PodCrashLooping` |
+| `bad-image` | An image tag that does not exist | `PodImagePullBackOff`, `DeploymentRolloutStuck` |
+| `unschedulable` | A CPU request no node can satisfy | `PodUnschedulable`, `DeploymentRolloutStuck` |
+
+[`docs/demo.md`](docs/demo.md) walks through what runs where, the live timeline, how to read the RCA and the audit log, and troubleshooting. To build, test, or run the parts by hand, see [`docs/development.md`](docs/development.md).
+
+**A real RCA from `make demo`.** A rollout broke `orders` with a malformed config value. incident-copilot opened a ticket and investigated the cluster, and Gate 1 checked every claim's citations. It caught one that cites no other claim, and capped the confidence at `low`:
+
+<img src="docs/images/demo-rca.png" alt="The local ticket page for PodCrashLooping on ic-target/demo/Deployment/orders: the Signals, a joined DeploymentRolloutStuck Signal, and a Root-cause analysis whose claims cite workload_state and events Evidence queries, with one claim failing Gate 1 and the confidence capped at low" width="720">
+
 ---
 
 ## Why
@@ -22,8 +49,6 @@ It is built for environments where an AI touching production must be **controlle
 - Every Signal, tool call, LLM request and response, approval, and step is written to a hash-chained audit log.
 
 ## How it works
-
-![incident-copilot architecture: alerts and Detectors come in, the Control plane investigates with an LLM, Runbooks, and read-only evidence, and writes an RCA to your ticket and Advice that a human approves before the Executor runs it](docs/images/architecture.svg)
 
 1. **Signal.** An alert from your monitoring, or a built-in Detector in the cluster, becomes a Signal.
 2. **Triage.** Deterministic code joins Signals about the same workload into one Incident with one ticket.
@@ -62,7 +87,7 @@ MCP servers are always called through incident-copilot's own client, behind read
 | **Evidence ledger** | What is affected, what was checked and is healthy, what changed for another reason, and what was not checked |
 | **Gaps** | Sources that were unavailable |
 
-Every field is made of claims that cite the tool calls behind them. A claim with no evidence is labelled as such, and it caps the confidence at `low`. Ticketing is behind an adapter interface, with **GitHub Issues** and **ServiceNow** adapters.
+Every field is made of claims that cite the tool calls behind them. A claim with no evidence is labelled as such, and it caps the confidence at `low`. Ticketing is behind an adapter interface. Production uses **GitHub Issues**, and **ServiceNow** is planned ([#68](https://github.com/itsankoff/incident-copilot/issues/68)).
 
 ## Trust model
 
@@ -106,110 +131,11 @@ It reports, per scenario and overall:
 
 Every investigation records its model, prompt, and Runbook versions, so it can be replayed against its recorded tool results with a new model or prompt. This makes prompt, model, and tool changes measurable rather than a matter of impression.
 
-## Demo environment
-
-Two local [kind](https://kind.sigs.k8s.io) clusters run the demo the way incident-copilot runs in production. The Target cluster `ic-target` runs a small Go service alongside Prometheus, Loki, and Alertmanager. The cluster `ic-control-plane` runs the incident-copilot Control plane. Alerts travel from `ic-target` to the Control plane, and nothing connects into `ic-target`.
-
-```mermaid
-flowchart LR
-    subgraph T[kind-ic-target]
-        APP[demo: orders, inventory, loadgen]
-        AM[monitoring: Alertmanager]
-    end
-    subgraph C[kind-ic-control-plane]
-        CP[incident-copilot: Control plane + SQLite PVC]
-    end
-    AM -- "Bearer token<br/>ic-control-plane-control-plane:30080<br/>/webhook/alertmanager" --> CP
-    CP -- issues --> GH[GitHub Issues, or the local demo adapter]
-```
-
-The full topology, with namespaces and networking, is in [`docs/design/demo-environment.md`](docs/design/demo-environment.md#topology). The service has injectable faults that cover the common categories of real incidents:
-
-| Fault | Symptom | Expected remediation |
-|---|---|---|
-| Memory leak | Rising memory, OOMKills | `restart_pod` / `scale_up` |
-| Bad config deploy | Error spike right after a rollout | `rollback_deployment` |
-| Dependency timeout | Latency and 5xx on downstream calls | none (escalate) |
-| Crash loop | `CrashLoopBackOff`, restart count rising | `rollback_deployment` |
-
-## Getting started
-
-### Prerequisites
-
-| Tool | Version | Needed for |
-|---|---|---|
-| [Go](https://go.dev) | 1.25+ | Building, testing, and `make fault` |
-| [Docker](https://docs.docker.com/get-docker/) | Any recent version, with 4 CPUs and 8 GB of memory allocated | Images and the kind nodes |
-| [kind](https://kind.sigs.k8s.io) | v0.31.0 | The two clusters (Kubernetes v1.35.0 nodes) |
-| [kubectl](https://kubernetes.io/docs/tasks/tools/) | Within one minor version of v1.35 (v1.34 to v1.36) | Every cluster target |
-| [Helm](https://helm.sh) | v3+ | The observability stack |
-| [golangci-lint](https://golangci-lint.run) | v2.13.2 | `make lint` |
-| [k9s](https://k9scli.io) (optional) | 0.50+ | `make k9s` |
-| [jq](https://jqlang.org) (optional) | Any | The manual tests in [`docs/manual-tests`](docs/manual-tests) |
-
-On macOS, install most of them with Homebrew: `brew install go kind kubectl helm k9s jq`. golangci-lint is pinned, so install it with the `go install` line below.
-
-On Linux, use each tool's official install method, which does not depend on your distro:
-
-- Go: the [official tarball](https://go.dev/doc/install).
-- Docker: [Docker Engine](https://docs.docker.com/engine/install/) for your distro.
-- kind: the release binary, `curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') && chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind`.
-- kubectl: [install kubectl on Linux](https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/).
-- Helm: [installing Helm](https://helm.sh/docs/intro/install/).
-- k9s: a release binary or package from the [k9s releases](https://github.com/derailed/k9s/releases), or see [k9s installation](https://k9scli.io/topics/install/).
-- jq: [download jq](https://jqlang.org/download/).
-
-On both, install golangci-lint with `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2`. The pinned versions live in [`deploy/versions.env`](deploy/versions.env), and `make tools` checks them.
-
-### Run it
-
-```sh
-make tools        # check that the prerequisites are installed
-make build test vet lint   # compile, unit-test, and lint the Go code
-make cluster       # create ic-target and ic-control-plane, and install Prometheus, Alertmanager, Loki, Alloy in ic-target
-make deploy        # build the demo-svc image and deploy orders, inventory, and loadgen into ic-target
-make control-plane # build the incident-copilot image and deploy the Control plane into ic-control-plane
-make port-forward  # ic-target's Prometheus :9090, Alertmanager :9093, Loki API :3100, Grafana :3000
-                   # (Grafana is on by default: make cluster GRAFANA=0 or make observability GRAFANA=0 to disable it. Loki has no UI of its own.)
-make status        # pods in both clusters
-make k9s           # browse ic-target in k9s (CLUSTER=cp for ic-control-plane)
-make down          # delete both clusters
-```
-
-`make help` lists every target. To check the two clusters end to end, from an alert in `ic-target` to a ticket, follow the manual test in [`docs/manual-tests/two-cluster-demo.md`](docs/manual-tests/two-cluster-demo.md).
-
-To roll a fault out to `orders` in `ic-target` and put it back (`make fault` with no `F` lists the scenarios and their ground truth):
-
-```sh
-make fault F=crash-loop    # or bad-image, unschedulable, oom
-make clear                 # restore the baseline; waits until all pods are Ready and no alerts fire
-```
-
-Planned, not implemented yet:
-
-```sh
-make eval                  # run the evaluation harness across all fault scenarios
-```
-
 ## Configuration
 
 `incident-copilot -role control-plane` reads its configuration from environment variables. It serves the Alertmanager webhook at `/webhook/alertmanager`, and Alertmanager must send `Authorization: Bearer <IC_ALERTMANAGER_TOKEN>`. It also serves the Sensor link at `/link/`. `incident-copilot -role sensor` dials out to it; `make sensor` deploys one into `ic-target`. `incident-copilot -role executor` dials out the same way and advertises its Actions, `rollback_deployment` for now; `make executor` deploys one into `ic-target`. The Control plane offers an advertised Action only when it matches the declaration in its own code exactly. It runs no Action yet (#57), so every Advice is shown at L1 in the ticket, with the steps to carry out by hand and the reason for each cap.
 
-The kill switch caps every later decision at its level, with no restart. Set it on the debug listener with `curl -X PUT localhost:8081/debug/kill-switch -d '{"level":"L1"}'` (L0, L1, or L2; `""` clears it), through `kubectl port-forward` in a cluster. It lives in the store and is audited as `killswitch.set`.
-
-For local runs, copy [`.env.demo.example`](.env.demo.example) to `.env.demo`, which is gitignored, and fill in the secrets. `make control-plane` turns `.env.demo` into the `incident-copilot-env` Secret in `ic-control-plane`. Without `IC_GITHUB_REPO` and `IC_GITHUB_TOKEN`, the Control plane starts with the local ticketing adapter, which is for demo purposes only: it keeps tickets next to its state and shows them, read-only, at `/tickets` on its HTTP port, and it logs that it did.
-
-To check the whole path against a real GitHub repository, follow the manual test in [`docs/manual-tests/github-issues.md`](docs/manual-tests/github-issues.md).
-
-### Alertmanager route
-
-Copy the route and receiver in [`deploy/alertmanager/incident-copilot.yaml`](deploy/alertmanager/incident-copilot.yaml) into your Alertmanager configuration, and set the URL and the token file. Its timers keep paired alerts inside the settle window and re-send firing alerts every 5 minutes, which Signal liveness relies on. The file explains each setting. For an Alertmanager HA pair, give both members the same token, so they are one Signal source and send the same key. The second notice is then a repeat.
-
-`ic-target`'s Alertmanager uses the same route. Both clusters sit on kind's Docker network, so it sends to the Control plane's NodePort by the `ic-control-plane` node's container name, `http://ic-control-plane-control-plane:30080/webhook/alertmanager`, with the token `demo-alertmanager-token`. To use another token, pass the same `IC_ALERTMANAGER_TOKEN=<token>` to both `make observability` and `make control-plane`. The demo Control plane is the Signal source `ic-target-alertmanager` with the Location `ic-target`.
-
-### Ingest bounds
-
-The Control plane rejects a request body over 1 MiB with `413`. It cuts each label and annotation value to 4 KiB and the raw alert to 64 KiB, and marks the Signal `truncated`. An unparseable body gets `400`. An internal failure gets `5xx`, so Alertmanager retries, and a retry is only a repeat notice. An alert that fails to normalise is dropped and audited, and the rest of its batch is accepted. A non-zero `truncatedAlerts` is audited. The manual test in [`docs/manual-tests/ingest-hardening.md`](docs/manual-tests/ingest-hardening.md) checks all of this and the demo route.
+### Environment variables
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -237,6 +163,24 @@ The Control plane rejects a request body over 1 MiB with `413`. It cuts each lab
 | `IC_EXECUTOR_LOCATION` | required (Executor) | Location this Executor serves |
 | `IC_EXECUTOR_TOKEN` | required (Executor) | The token `IC_LOCATIONS` holds for this Location: the link stand-in authenticates a Location, not a role |
 
+For the local demo, `.env.demo` (gitignored, with [`.env.demo.example`](.env.demo.example) as its template) holds the secrets, and `make control-plane` turns it into the `incident-copilot-env` Secret in `ic-control-plane`. Without `IC_GITHUB_REPO` and `IC_GITHUB_TOKEN`, the Control plane starts with the local ticketing adapter, which is for demo purposes only: it keeps tickets next to its state and shows them, read-only, at `/tickets` on its HTTP port, and it logs that it did.
+
+To check the whole path against a real GitHub repository, follow the manual test in [`docs/manual-tests/github-issues.md`](docs/manual-tests/github-issues.md).
+
+### Kill switch
+
+The kill switch caps every later decision at its level, with no restart. Set it on the debug listener with `curl -X PUT localhost:8081/debug/kill-switch -d '{"level":"L1"}'` (L0, L1, or L2; `""` clears it), through `kubectl port-forward` in a cluster. It lives in the store and is audited as `killswitch.set`.
+
+### Alertmanager route
+
+Copy the route and receiver in [`deploy/alertmanager/incident-copilot.yaml`](deploy/alertmanager/incident-copilot.yaml) into your Alertmanager configuration, and set the URL and the token file. Its timers keep paired alerts inside the settle window and re-send firing alerts every 5 minutes, which Signal liveness relies on. The file explains each setting. For an Alertmanager HA pair, give both members the same token, so they are one Signal source and send the same key. The second notice is then a repeat.
+
+`ic-target`'s Alertmanager uses the same route. Both clusters sit on kind's Docker network, so it sends to the Control plane's NodePort by the `ic-control-plane` node's container name, `http://ic-control-plane-control-plane:30080/webhook/alertmanager`, with the token `demo-alertmanager-token`. To use another token, pass the same `IC_ALERTMANAGER_TOKEN=<token>` to both `make observability` and `make control-plane`. The demo Control plane is the Signal source `ic-target-alertmanager` with the Location `ic-target`.
+
+### Ingest bounds
+
+The Control plane rejects a request body over 1 MiB with `413`. It cuts each label and annotation value to 4 KiB and the raw alert to 64 KiB, and marks the Signal `truncated`. An unparseable body gets `400`. An internal failure gets `5xx`, so Alertmanager retries, and a retry is only a repeat notice. An alert that fails to normalise is dropped and audited, and the rest of its batch is accepted. A non-zero `truncatedAlerts` is audited. The manual test in [`docs/manual-tests/ingest-hardening.md`](docs/manual-tests/ingest-hardening.md) checks all of this and the demo route.
+
 ## Design choices
 
 - **Go, no agent framework.** The LLM loops, tool dispatch, retries, and budgets are plain Go code that can be read and tested.
@@ -250,18 +194,39 @@ The Control plane rejects a request body over 1 MiB with `413`. It cuts each lab
 
 Planned work is tracked in [GitHub Issues](https://github.com/itsankoff/incident-copilot/issues), starting from the [Wayfinder map](https://github.com/itsankoff/incident-copilot/issues/3), and its live status is on the [project board](https://github.com/users/itsankoff/projects/1). Each change goes from a specced issue to a reviewed pull request, and the board follows it from Backlog to Done. The demo environment is designed in [`docs/design/demo-environment.md`](docs/design/demo-environment.md).
 
-- [x] kind cluster, demo service, and the observability stack, wired up with a Makefile
-- [ ] Fault injection in the demo service
-- [ ] Agent loop, investigation tools, and RCA generation for one fault end to end
-- [ ] ServiceNow integration and GitHub Issues fallback
-- [ ] Runbook allowlist, autonomy levels, approval gate, and audit log
-- [ ] Evaluation harness across all fault scenarios
-- [x] ADR on the autonomy and trust model
-- [ ] Bicep/Terraform module to deploy the demo onto AKS
+Done:
+
+- [x] Two local kind clusters, `ic-target` with the demo service and its observability stack and `ic-control-plane` for incident-copilot, wired up with a Makefile ([#73](https://github.com/itsankoff/incident-copilot/issues/73))
+- [x] Authenticated, hardened Alertmanager intake, Triage into Incidents, and one GitHub issue per Incident ([#43](https://github.com/itsankoff/incident-copilot/issues/43), [#44](https://github.com/itsankoff/incident-copilot/issues/44))
+- [x] Four deploy fault scenarios with their ground truth, and alerts for the five Detector problems ([#46](https://github.com/itsankoff/incident-copilot/issues/46))
+- [x] A Sensor that dials out to the Control plane and answers `workload_state` and `events` Evidence queries ([#47](https://github.com/itsankoff/incident-copilot/issues/47))
+- [x] The LLM investigation loop: an RCA whose Claims cite their evidence, checked by Gate 1, with a hash-chained audit log ([#48](https://github.com/itsankoff/incident-copilot/issues/48))
+- [x] Incident lifecycle: resolve, expire, close, reopen, and recurrence ([#45](https://github.com/itsankoff/incident-copilot/issues/45))
+- [x] Redaction and untrusted-data framing for every LLM call ([#49](https://github.com/itsankoff/incident-copilot/issues/49))
+- [x] L1 Advice in the ticket, checked by Gate 1 and capped by Decide and the kill switch, with an Executor that advertises its Actions ([#56](https://github.com/itsankoff/incident-copilot/issues/56))
+- [x] Local demo ticketing and readable Incident milestone logs ([#89](https://github.com/itsankoff/incident-copilot/issues/89))
+- [x] The CrashLoopBackOff Detector in the Sensor ([#54](https://github.com/itsankoff/incident-copilot/issues/54))
+- [x] One-command local demo, `make demo` ([#90](https://github.com/itsankoff/incident-copilot/issues/90), PR [#82](https://github.com/itsankoff/incident-copilot/pull/82))
+- [x] ADRs on the autonomy and trust model, and on product scope and platform seams
+
+In progress:
+
+- [ ] SQL migrations for the Control plane store ([#94](https://github.com/itsankoff/incident-copilot/issues/94), PR [#102](https://github.com/itsankoff/incident-copilot/pull/102))
+
+Planned:
+
+- [ ] The OOMKilled, stuck rollout, ImagePullBackOff, and FailedScheduling Detectors ([#55](https://github.com/itsankoff/incident-copilot/issues/55))
+- [ ] The full RCA shape with Gate 1 repair ([#50](https://github.com/itsankoff/incident-copilot/issues/50)), the settle window with re-investigation ([#53](https://github.com/itsankoff/incident-copilot/issues/53)), and past resolved Incidents as hypotheses ([#66](https://github.com/itsankoff/incident-copilot/issues/66))
+- [ ] More Evidence: `metrics`, `logs`, `changes`, and `list_workloads` ([#51](https://github.com/itsankoff/incident-copilot/issues/51), [#52](https://github.com/itsankoff/incident-copilot/issues/52)), and the GitHub MCP server ([#62](https://github.com/itsankoff/incident-copilot/issues/62))
+- [ ] The Executor and L2: `rollback_deployment`, `restart_pod`, and `scale_up`, approve, run, verify, and escalate, edits on a review page, and approval from Slack ([#57](https://github.com/itsankoff/incident-copilot/issues/57), [#58](https://github.com/itsankoff/incident-copilot/issues/58), [#59](https://github.com/itsankoff/incident-copilot/issues/59), [#60](https://github.com/itsankoff/incident-copilot/issues/60), [#61](https://github.com/itsankoff/incident-copilot/issues/61))
+- [ ] Runbooks as investigation guides and as the source of Advice, imported from Confluence ([#63](https://github.com/itsankoff/incident-copilot/issues/63), [#64](https://github.com/itsankoff/incident-copilot/issues/64), [#65](https://github.com/itsankoff/incident-copilot/issues/65))
+- [ ] ServiceNow ticketing ([#68](https://github.com/itsankoff/incident-copilot/issues/68))
+- [ ] More fault scenarios ([#69](https://github.com/itsankoff/incident-copilot/issues/69)), the evaluation harness ([#70](https://github.com/itsankoff/incident-copilot/issues/70)), and replaying an investigation with a new model or prompt ([#67](https://github.com/itsankoff/incident-copilot/issues/67))
+- [ ] A quick-start install ([#71](https://github.com/itsankoff/incident-copilot/issues/71)), and a Bicep/Terraform module to deploy the demo onto AKS
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the engineering conventions.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the engineering conventions, and [`docs/development.md`](docs/development.md) for the development commands.
 
 ## License
 

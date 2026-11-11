@@ -1,0 +1,182 @@
+// Package demorun is the logic of the make demo runner (cmd/demo): it renders
+// the Control plane's and the Sensor's milestone log lines, reports what the
+// demo cluster and its Alertmanager do, and follows one Incident to its RCA.
+package demorun
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+)
+
+// Milestone is one step of an Incident's life, or of the Sensor link, as the
+// Control plane or the Sensor logs it: a JSON slog line whose msg is the
+// matching audit event type (#89).
+type Milestone struct {
+	Msg      string
+	Incident int64
+	Fields   map[string]any
+}
+
+// milestones are the msg values the runner renders.
+var milestones = map[string]bool{
+	"signal.received": true, "triage.decision": true,
+	"ticket.created": true, "ticket.commented": true,
+	"investigation.started": true, "investigation.step": true,
+	"investigation.finished": true, "investigation.exhausted": true,
+	"investigation.skipped": true, "investigation.cancelled": true, "investigation.failed": true,
+	"rca.posted":          true,
+	"remediation.started": true, "remediation.step": true, "remediation.finished": true, "remediation.skipped": true,
+	"advice.posted": true, "ticket.ready": true, "ticket.closed": true,
+	"link.up": true, "link.down": true,
+}
+
+// ParseMilestone parses one log line, and reports false for anything that is
+// not a milestone.
+func ParseMilestone(line []byte) (Milestone, bool) {
+	var fields map[string]any
+	if json.Unmarshal(line, &fields) != nil {
+		return Milestone{}, false
+	}
+	msg, _ := fields["msg"].(string)
+	if !milestones[msg] {
+		return Milestone{}, false
+	}
+	m := Milestone{Msg: msg, Fields: fields}
+	if n, ok := fields["incident"].(float64); ok {
+		m.Incident = int64(n)
+	}
+	return m, true
+}
+
+// Str returns field k as text, or "".
+func (m Milestone) Str(k string) string {
+	switch v := m.Fields[k].(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case float64:
+		return fmt.Sprint(int64(v))
+	default:
+		return fmt.Sprint(v)
+	}
+}
+
+// String is the line the runner shows for m.
+func (m Milestone) String() string {
+	switch m.Msg {
+	case "signal.received":
+		return fmt.Sprintf("Control plane received Signal %s from %s about %s", m.Str("name"), m.Str("source"), m.Str("target"))
+	case "triage.decision":
+		return m.decision()
+	case "ticket.created":
+		return fmt.Sprintf("Ticket %s created (%s ticketing)", m.Str("ref"), m.Str("adapter"))
+	case "ticket.commented":
+		return fmt.Sprintf("Ticket %s commented: %s (%s ticketing)", m.Str("ref"), m.Str("kind"), m.Str("adapter"))
+	case "investigation.started":
+		return fmt.Sprintf("Investigation started with %s (budget: %s)", m.Str("model"), m.budget())
+	case "investigation.step", "remediation.step":
+		return m.step()
+	case "investigation.finished":
+		return fmt.Sprintf("Investigation finished: confidence %s after %s steps in %s", m.Str("confidence"), m.Str("steps"), m.duration("duration"))
+	case "investigation.exhausted":
+		return fmt.Sprintf("Investigation ran out of its %s budget: confidence %s after %s steps in %s", m.Str("budget"), m.Str("confidence"), m.Str("steps"), m.duration("duration"))
+	case "investigation.skipped":
+		return "Investigation skipped: " + m.Str("reason")
+	case "investigation.cancelled":
+		return fmt.Sprintf("Investigation cancelled after %s steps: %s", m.Str("steps"), m.Str("reason"))
+	case "investigation.failed":
+		return "Investigation failed: " + m.Str("error")
+	case "rca.posted":
+		return "RCA written to ticket " + m.Str("ref")
+	case "remediation.started":
+		return fmt.Sprintf("Remediation started with %s: drafting Advice from the RCA", m.Str("model"))
+	case "remediation.finished":
+		if v, _ := m.Fields["submitted"].(bool); v {
+			return fmt.Sprintf("Remediation finished: Advice drafted after %s steps", m.Str("steps"))
+		}
+		return fmt.Sprintf("Remediation stopped after %s steps without Advice", m.Str("steps"))
+	case "remediation.skipped":
+		return "No Advice drafted: " + m.Str("reason")
+	case "advice.posted":
+		return fmt.Sprintf("Advice written to ticket %s, at autonomy level %s", m.Str("ref"), m.Str("level"))
+	case "ticket.closed":
+		return fmt.Sprintf("Ticket %s closed (%s ticketing)", m.Str("ref"), m.Str("adapter"))
+	case "ticket.ready":
+		return fmt.Sprintf("Ticket %s is ready for review", m.Str("ref"))
+	case "link.up":
+		return "Sensor link up: the Sensor dialed out to the Control plane"
+	case "link.down":
+		return fmt.Sprintf("Sensor link down (%s)", m.Str("error"))
+	}
+	return m.Msg
+}
+
+func (m Milestone) step() string {
+	verdict := func(ok, failed string) string {
+		if v, _ := m.Fields["ok"].(bool); v {
+			return ok
+		}
+		return failed
+	}
+	prefix := "step " + m.Str("step") + ": "
+	// submit_rca and submit_advice are how the LLM hands in its answer, not
+	// Evidence queries.
+	if tool := m.Str("tool"); tool == "submit_rca" {
+		return prefix + "the LLM " + verdict("submitted its RCA", "sent an RCA that could not be read")
+	} else if tool == "submit_advice" {
+		return prefix + "the LLM " + verdict("submitted its Advice", "sent Advice that could not be read")
+	} else if tool != "" {
+		return prefix + "Evidence query " + tool + " " + verdict("ok", "failed")
+	}
+	if model, ok := m.Fields["llm"].(string); ok && model != "" {
+		return prefix + "LLM " + model + " " + verdict("answered", "failed")
+	}
+	return prefix + "LLM " + verdict("answered", "request failed")
+}
+
+// decision renders a Triage decision, with its reason when there is one.
+func (m Milestone) decision() string {
+	var text string
+	switch d := m.Str("decision"); d {
+	case "open":
+		text = fmt.Sprintf("Triage opened Incident %d", m.Incident)
+	case "join":
+		text = fmt.Sprintf("Triage joined the Signal to open Incident %d", m.Incident)
+	case "reopen":
+		text = fmt.Sprintf("Triage reopened resolved Incident %d", m.Incident)
+	case "end":
+		text = fmt.Sprintf("Triage: one of Incident %d's Signals ended", m.Incident)
+	case "resolve":
+		text = fmt.Sprintf("Triage resolved Incident %d: its last Signal ended", m.Incident)
+	case "close":
+		text = fmt.Sprintf("Triage closed Incident %d", m.Incident)
+	default:
+		text = fmt.Sprintf("Triage decision %s for Incident %d", d, m.Incident)
+	}
+	if r := m.Str("reason"); r != "" {
+		text += " (" + r + ")"
+	}
+	return text
+}
+
+// budget renders the investigation's budget, which the Control plane logs
+// as a group.
+func (m Milestone) budget() string {
+	b, ok := m.Fields["budget"].(map[string]any)
+	if !ok {
+		return m.Str("budget")
+	}
+	sub := Milestone{Fields: b}
+	return fmt.Sprintf("%s steps, %s tokens, %s", sub.Str("steps"), sub.Str("tokens"), sub.duration("time"))
+}
+
+// duration renders a duration that slog writes as nanoseconds, or as text.
+func (m Milestone) duration(k string) string {
+	if n, ok := m.Fields[k].(float64); ok {
+		return time.Duration(n).Round(100 * time.Millisecond).String()
+	}
+	return strings.TrimSpace(m.Str(k))
+}

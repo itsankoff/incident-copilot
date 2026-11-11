@@ -66,7 +66,7 @@ redact-rules: ## Regenerate internal/redact/rules_gen.go from betterleaks $(BETT
 tools: ## Check that required tools are installed
 	@ok=1; \
 	for t in docker kind kubectl helm go; do \
-	  command -v $$t >/dev/null || { echo "missing: $$t (macOS: brew install $$t; Linux: see README Prerequisites)"; ok=0; }; \
+	  command -v $$t >/dev/null || { echo "missing: $$t (macOS: brew install $$t; Linux: see docs/development.md Prerequisites)"; ok=0; }; \
 	done; \
 	[ $$ok = 1 ] || exit 1; \
 	docker info >/dev/null 2>&1 || { echo "docker daemon is not running"; exit 1; }; \
@@ -80,14 +80,22 @@ tools: ## Check that required tools are installed
 	  k9v=$$(k9s version -s | awk '/^Version/ {print $$2}'); \
 	  printf '%s\n%s\n' "$(K9S_MIN_VERSION)" "$$k9v" | sort -V -C || echo "warning: k9s $$k9v < $(K9S_MIN_VERSION)"; \
 	else \
-	  echo "optional: k9s not found, needed only for make k9s (macOS: brew install k9s; Linux: see README Prerequisites)"; \
+	  echo "optional: k9s not found, needed only for make k9s (macOS: brew install k9s; Linux: see docs/development.md Prerequisites)"; \
 	fi; \
 	echo "tools ok (go $$gv, kind $$kv, helm $$(helm version --short))"
 
 ##@ Demo environment
 
+.PHONY: demo
+demo: ## Run the whole demo: check prerequisites, set up both clusters, roll out a fault (F=<scenario>, default crash-loop), follow it to an RCA
+	@bash cmd/demo/bootstrap.sh $(if $(F),-fault $(F))
+
 .PHONY: cluster
-cluster: tools ## Create the ic-target and ic-control-plane kind clusters and install the observability stack (idempotent)
+cluster: kind-clusters ## Create the ic-target and ic-control-plane kind clusters and install the observability stack (idempotent)
+	$(MAKE) observability
+
+.PHONY: kind-clusters
+kind-clusters: tools ## Create the ic-target and ic-control-plane kind clusters, reusing existing ones
 	@for c in $(TARGET_CLUSTER):target $(CONTROL_PLANE_CLUSTER):control-plane; do \
 	  name=$${c%%:*}; \
 	  if kind get clusters 2>/dev/null | grep -qx "$$name"; then \
@@ -97,7 +105,6 @@ cluster: tools ## Create the ic-target and ic-control-plane kind clusters and in
 	      --image $(KIND_NODE_IMAGE) --wait 120s; \
 	  fi; \
 	done
-	$(MAKE) observability
 
 .PHONY: observability
 observability: ## Install or upgrade Prometheus, Alertmanager, Loki, and Alloy in ic-target
@@ -162,7 +169,8 @@ control-plane: ## Build incident-copilot, load it into ic-control-plane, and dep
 	@rm -rf build/control-plane && mkdir -p build/control-plane
 	@# IC_ALERTMANAGER_TOKEN and IC_LOCATIONS come from the Makefile, so they match ic-target's.
 	@# kustomize keeps quotes in an env file's values, so a quoted value loses them here.
-	@if [ -f .env.demo ]; then grep -vE '^(IC_ALERTMANAGER_TOKEN|IC_LOCATIONS)=' .env.demo | sed -E 's/^([A-Za-z_][A-Za-z0-9_]*)="(.*)"$$/\1=\2/' > build/control-plane/.env.demo || true; \
+	@# Empty and "..." placeholder values count as unset, as in bootstrap.sh and demorun.ReadEnvFile.
+	@if [ -f .env.demo ]; then grep -vE '^(IC_ALERTMANAGER_TOKEN|IC_LOCATIONS)=' .env.demo | sed -E 's/^([A-Za-z_][A-Za-z0-9_]*)="(.*)"$$/\1=\2/' | grep -vE '^[A-Za-z_][A-Za-z0-9_]*=(.*\.\.\.)?$$' > build/control-plane/.env.demo || true; \
 	else echo "no .env.demo: the Control plane starts with the local ticketing adapter and investigates nothing"; touch build/control-plane/.env.demo; fi
 	@printf '%s\n' \
 	  'apiVersion: kustomize.config.k8s.io/v1beta1' \
@@ -244,7 +252,7 @@ CLUSTER ?= target
 
 .PHONY: k9s
 k9s: ## Open k9s on a cluster (CLUSTER=target, the default, or CLUSTER=cp)
-	@command -v k9s >/dev/null || { echo "missing: k9s (macOS: brew install k9s; Linux: see README Prerequisites)"; exit 1; }
+	@command -v k9s >/dev/null || { echo "missing: k9s (macOS: brew install k9s; Linux: see docs/development.md Prerequisites)"; exit 1; }
 	@case "$(CLUSTER)" in \
 	  target) exec k9s --context kind-$(TARGET_CLUSTER) ;; \
 	  cp)     exec k9s --context kind-$(CONTROL_PLANE_CLUSTER) ;; \

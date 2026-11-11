@@ -15,6 +15,8 @@ Check what actually exists before assuming a package, command, or file is presen
 make build test vet lint
 ```
 
+[`docs/development.md`](docs/development.md) has the development commands, how to run the demo environment one part at a time, and the manual tests.
+
 ## Engineering conventions
 
 - **Interfaces at every external boundary:** the LLM, ticketing, approval, the k8s client, Prometheus, Loki, and GitHub. This lets unit tests use fakes with no network access. Tests that need a real cluster or real APIs belong behind a build tag or in the eval harness.
