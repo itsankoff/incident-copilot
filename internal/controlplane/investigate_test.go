@@ -331,9 +331,8 @@ func TestAnInvestigationIsAuditedWholeAndReproducibly(t *testing.T) {
 
 	log := h.auditLog()
 	for _, e := range log {
-		// What a tool read is recorded once, under its Evidence query.
-		if strings.Contains(string(e.Data), "CrashLoopBackOff") != (e.Type == "evidence.query") {
-			t.Errorf("%s: tool output recorded or missing: %s", e.Type, e.Data)
+		if strings.Contains(string(e.Data), "CrashLoopBackOff") {
+			t.Errorf("%s holds raw tool output: %s", e.Type, e.Data)
 		}
 	}
 	reqs, resps := ofType(log, "llm.request"), ofType(log, "llm.response")

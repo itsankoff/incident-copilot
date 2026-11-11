@@ -148,10 +148,6 @@ func TestSecretsFromTheSensorReachNeitherTheLLMNorTheAuditLog(t *testing.T) {
 			t.Errorf("the audit chain holds %q", s)
 		}
 	}
-	q := ofType(h.auditLog(), "evidence.query")
-	if len(q) != 2 || !strings.Contains(string(q[0].Data)+string(q[1].Data), "upload failed key=[REDACTED]") {
-		t.Errorf("evidence.query does not record the redacted answer: %+v", q)
-	}
 }
 
 func TestToolOutputReachesTheLLMOnlyInsideTheUntrustedFrame(t *testing.T) {

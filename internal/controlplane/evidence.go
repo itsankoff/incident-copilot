@@ -3,6 +3,8 @@ package controlplane
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,8 +45,9 @@ var errAudit = errors.New("audit")
 const defaultWindow = time.Hour
 
 // Query runs q for incident (0 outside any Incident). It redacts the answer
-// and its error text on arrival, whatever the Sensor did (ADR 0003 D8), and
-// audits them with the ref. A failed query still returns its ref, so the
+// and its error text on arrival, whatever the Sensor did (ADR 0003 D8). The
+// audit entry holds the ref and a digest of the redacted answer, never the
+// answer. A failed query still returns its ref, so the
 // failure can be reported against it.
 func (e *Evidence) Query(ctx context.Context, incident int64, q evidence.Query) (evidence.Result, error) {
 	now := e.now()
@@ -66,10 +69,11 @@ func (e *Evidence) Query(ctx context.Context, incident int64, q evidence.Query) 
 	case err != nil:
 		entry["outcome"], entry["error"] = "error", err.Error()
 	case answer.Error != "":
-		entry["outcome"], entry["error"] = "tool_error", answer.Error
+		entry["outcome"] = "tool_error"
 		err = fmt.Errorf("%s: %s", q.Tool, answer.Error)
 	default:
-		entry["outcome"], entry["data"] = "ok", answer.Data
+		sum := sha256.Sum256(answer.Data)
+		entry["outcome"], entry["bytes"], entry["sha256"] = "ok", len(answer.Data), hex.EncodeToString(sum[:])
 	}
 	if aerr := e.audit.Append(e.now(), "evidence.query", incident, entry); aerr != nil {
 		return evidence.Result{Ref: ref}, fmt.Errorf("%w: %w", errAudit, aerr)

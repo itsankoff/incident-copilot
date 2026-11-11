@@ -92,13 +92,22 @@ With `openrouter/free`, a step may be answered by a model that writes malformed 
 ```sh
 for s in "$AWS" "$GH" "$SIG" "$PW"; do echo "$s $(grep -c -- "$s" "$RUN/audit.jsonl")"; done
 # expect 0 on every line
-jq -r 'select(.type == "evidence.query" and .data.tool == "events") | .data.data[] | select(.reason == "HeapDumpUploadFailed") | .message' "$RUN/audit.jsonl"
-# expect: upload failed: key [REDACTED] token [REDACTED] url https://dumps.s3.amazonaws.com/heap.bin?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=[REDACTED]&X-Amz-Signature=[REDACTED] db password=[REDACTED]
-jq -c 'select(.type == "evidence.query" and .data.tool == "workload_state") | .data.data.spec.template.spec.containers[0].env' "$RUN/audit.jsonl"
-# expect: [{"name":"AWS_ACCESS_KEY_ID","value":"[REDACTED]"},{"name":"DB_PASSWORD","value":"[REDACTED]"}]
 ```
 
-`evidence.query` records the redacted answer, which is exactly what the model read. `llm.request` records each tool result only as a digest, so the evidence lives in one place.
+The Control plane's debug listener returns the redacted answers the model read. It has no authentication and binds to loopback inside the pod, so only a port-forward reaches it:
+
+```sh
+icp port-forward deploy/control-plane 8081:8081 >/dev/null 2>&1 &
+sleep 2
+T='{"platform":"kubernetes","location":"ic-target","namespace":"demo","kind":"Deployment","name":"'"$NAME"'"}'
+curl -s -XPOST localhost:8081/debug/evidence -d '{"tool":"events","target":'"$T"'}' | jq -r '.data[] | select(.reason == "HeapDumpUploadFailed") | .message'
+# expect: upload failed: key [REDACTED] token [REDACTED] url https://dumps.s3.amazonaws.com/heap.bin?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=[REDACTED]&X-Amz-Signature=[REDACTED] db password=[REDACTED]
+curl -s -XPOST localhost:8081/debug/evidence -d '{"tool":"workload_state","target":'"$T"'}' | jq -c '.data.spec.template.spec.containers[0].env'
+# expect: [{"name":"AWS_ACCESS_KEY_ID","value":"[REDACTED]"},{"name":"DB_PASSWORD","value":"[REDACTED]"}]
+kill %1   # the port-forward
+```
+
+`evidence.query` records the ref and a digest of the redacted answer, never the answer; `/debug/evidence` returns the redacted answer itself. `llm.request` records each tool result only as a digest too.
 
 ## 5. The LLM got identifiers and redacted data only
 
