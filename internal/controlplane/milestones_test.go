@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -90,7 +91,8 @@ func TestAnIncidentsMilestonesAreLoggedOnceInOrder(t *testing.T) {
 		"investigation.started",
 		"investigation.step", "investigation.step", "investigation.step", // the LLM, then its two Evidence queries
 		"investigation.step", "investigation.step", // the LLM, then submit_rca
-		"investigation.finished", "rca.posted", "ticket.ready",
+		"investigation.finished", "rca.posted",
+		"remediation.skipped", "advice.posted", "ticket.ready", // no Executor is linked, so no Actions are offered
 		"signal.received", "triage.decision", "ticket.commented",
 	}
 	if strings.Join(got, " ") != strings.Join(order, " ") {
@@ -116,10 +118,14 @@ func TestAnIncidentsMilestonesAreLoggedOnceInOrder(t *testing.T) {
 	want(t, lines[8], map[string]any{"step": float64(2), "tool": "submit_rca", "ok": true})
 	want(t, lines[9], map[string]any{"confidence": "medium", "steps": float64(2), "duration": "0s"})
 	want(t, lines[10], map[string]any{"ref": "1"})
-	want(t, lines[11], map[string]any{"ref": "1", "url": "https://tickets.example/1"})
-	want(t, lines[12], map[string]any{"name": "OrdersErrorRate"})
-	want(t, lines[13], map[string]any{"decision": "join"})
-	want(t, lines[14], map[string]any{"adapter": "fake", "ref": "1", "kind": "join"})
+	if r, _ := lines[11]["reason"].(string); !strings.Contains(r, "not linked") {
+		t.Errorf("remediation.skipped reason %q", lines[11]["reason"])
+	}
+	want(t, lines[12], map[string]any{"ref": "1", "level": "L1"})
+	want(t, lines[13], map[string]any{"ref": "1", "url": "https://tickets.example/1"})
+	want(t, lines[14], map[string]any{"name": "OrdersErrorRate"})
+	want(t, lines[15], map[string]any{"decision": "join"})
+	want(t, lines[16], map[string]any{"adapter": "fake", "ref": "1", "kind": "join"})
 
 	// Names and counts only: no Evidence, model text, or Alert annotations,
 	// at any level.
@@ -139,7 +145,7 @@ func TestAnInvestigationOutOfBudgetLogsExhausted(t *testing.T) {
 
 	lines := h.milestones()
 	got := strings.Join(msgs(lines), " ")
-	if strings.Contains(got, "investigation.finished") || !strings.Contains(got, "investigation.exhausted rca.posted ticket.ready") {
+	if strings.Contains(got, "investigation.finished") || !strings.Contains(got, "investigation.exhausted rca.posted remediation.skipped advice.posted ticket.ready") {
 		t.Fatalf("milestones %q, want investigation.exhausted and no investigation.finished", got)
 	}
 	for _, line := range lines {
@@ -214,5 +220,37 @@ func TestAHumanCloseCancellingAnInvestigationIsLogged(t *testing.T) {
 	}
 	if !closeDecision {
 		t.Errorf("no close decision logged in %q", got)
+	}
+}
+
+func TestTheRemediationLoopIsLoggedBeforeTheTicketIsReady(t *testing.T) {
+	h := startAdvice(t, remediate(t, func(_, ref string) string { return rollbackTo(ref) }))
+	h.send(tokenProd, alert("KubePodCrashLooping", "aaa", orders))
+
+	lines := h.milestones()
+	got := msgs(lines)
+	i := slices.Index(got, "rca.posted")
+	if i < 0 {
+		t.Fatalf("no rca.posted in %q", got)
+	}
+	tail := []string{
+		"remediation.started",
+		"remediation.step", "remediation.step", // the LLM, then its workload_state read
+		"remediation.step", "remediation.step", // the LLM, then submit_advice
+		"remediation.finished", "advice.posted", "ticket.ready",
+	}
+	if strings.Join(got[i+1:], " ") != strings.Join(tail, " ") {
+		t.Fatalf("milestones after rca.posted:\n %q\nwant\n %q", got[i+1:], tail)
+	}
+	rest := lines[i+1:]
+	want(t, rest[0], map[string]any{"incident": float64(1), "model": "openrouter/free"})
+	want(t, rest[2], map[string]any{"step": float64(1), "tool": "workload_state", "ok": true})
+	want(t, rest[4], map[string]any{"step": float64(2), "tool": "submit_advice", "ok": true})
+	want(t, rest[5], map[string]any{"submitted": true, "steps": float64(2)})
+	// Approval is not built yet (#58), so Advice stays at L1.
+	want(t, rest[6], map[string]any{"ref": "1", "level": "L1"})
+	want(t, rest[7], map[string]any{"ref": "1", "url": "https://tickets.example/1"})
+	if strings.Contains(h.logs.String(), "Revision 4 broke orders") {
+		t.Error("the log contains the model's Advice text")
 	}
 }

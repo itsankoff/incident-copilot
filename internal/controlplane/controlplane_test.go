@@ -120,6 +120,7 @@ type harness struct {
 	dir     string
 	url     string
 	store   *store.Store
+	log     *audit.Log
 	tickets *fakeTickets
 	logs    *syncBuffer // the Control plane's log, at every level
 	cp      *Server
@@ -149,7 +150,7 @@ func start(t *testing.T, dir string, tickets *fakeTickets, sources []signal.Sour
 
 // startWith is start with an Investigator built by inv, when set.
 func startWith(t *testing.T, dir string, tickets *fakeTickets, sources []signal.Source, wrap func(*store.Store) Store,
-	inv func(*audit.Log, Ticketing, *slog.Logger, func() time.Time) *Investigator) *harness {
+	inv func(*store.Store, *audit.Log, Ticketing, *slog.Logger, func() time.Time) *Investigator) *harness {
 	t.Helper()
 	st, err := store.Open(filepath.Join(dir, "state.db"))
 	if err != nil {
@@ -159,7 +160,7 @@ func startWith(t *testing.T, dir string, tickets *fakeTickets, sources []signal.
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{t: t, dir: dir, store: st, tickets: tickets, logs: &syncBuffer{}, now: t0.Add(time.Minute)}
+	h := &harness{t: t, dir: dir, store: st, log: log, tickets: tickets, logs: &syncBuffer{}, now: t0.Add(time.Minute)}
 	logger := slog.New(slog.NewJSONHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	var s Store = st
 	if wrap != nil {
@@ -168,7 +169,7 @@ func startWith(t *testing.T, dir string, tickets *fakeTickets, sources []signal.
 	now := func() time.Time { return h.now }
 	var investigator *Investigator
 	if inv != nil {
-		investigator = inv(log, tickets, logger, now)
+		investigator = inv(st, log, tickets, logger, now)
 	}
 	h.cp = New(alertmanager.New(sources), s, tickets, log, logger, now, investigator)
 	srv := httptest.NewServer(h.cp.Handler())

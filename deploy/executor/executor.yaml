@@ -1,0 +1,36 @@
+# The Executor for Location ic-target. It dials out to the Control plane's
+# NodePort, as the Sensor does, and advertises its Actions. It runs none yet
+# (#57), so it has no Kubernetes credentials at all: the RBAC its Actions need
+# comes with them.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: executor
+  labels: { app.kubernetes.io/name: executor, app.kubernetes.io/part-of: incident-copilot }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: executor }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: executor, app.kubernetes.io/part-of: incident-copilot }
+    spec:
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532 }
+      containers:
+        - name: executor
+          image: incident-copilot
+          args: ["-role=executor"]
+          # IC_EXECUTOR_TOKEN
+          envFrom:
+            - secretRef: { name: incident-copilot-executor }
+          env:
+            - { name: IC_EXECUTOR_LOCATION, value: ic-target }
+            - { name: IC_CONTROL_PLANE_URL, value: "http://ic-control-plane-control-plane:30080" }
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 64Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }

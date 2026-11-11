@@ -80,11 +80,15 @@ Expect these lines, in this order, all with the same `incident`:
 | `investigation.step` | `step`, then `llm` (the model that answered) or `tool` (`workload_state`, `events`, `submit_rca`), and `ok` |
 | `investigation.finished` | `confidence`, `steps`, `duration`; or `investigation.exhausted` with the `budget` that ran out |
 | `rca.posted` | `ref` |
-| `ticket.ready` | `ref`, `url` `/tickets/<ref>` |
+| `remediation.started` | `model`; or `remediation.skipped` with its `reason`, such as no Executor linked |
+| `remediation.step` | as `investigation.step`, for the [L1 Advice](l1-advice.md) loop, ending in `submit_advice` |
+| `remediation.finished` | `submitted`, `steps` |
+| `advice.posted` | `ref`, `level` (`L1`) |
+| `ticket.ready` | `ref`, `url` `/tickets/<ref>`, once the RCA and the Advice are on the ticket |
 
 Later steps of the [Incident lifecycle](incident-lifecycle.md) log the same way: `triage.decision` with `decision` `end`, `resolve`, `reopen` or `close` (and its `reason`), `ticket.commented` with that `kind`, and `ticket.closed` when incident-copilot closes the ticket. An investigation stopped by a close logs `investigation.cancelled` with its `reason` instead of `rca.posted`.
 
-`investigation.step` repeats once per LLM step and once per tool call. Every other line appears once. Nothing in the log holds `MANUAL-TEST-ANNOTATION`, Evidence data, or the model's text:
+`investigation.step` and `remediation.step` repeat once per LLM step and once per tool call. Every other line appears once. Nothing in the log holds `MANUAL-TEST-ANNOTATION`, Evidence data, or the model's text:
 
 ```sh
 icp logs deploy/control-plane -c control-plane | grep -c MANUAL-TEST-ANNOTATION   # expect 0
@@ -137,7 +141,7 @@ icp logs deploy/control-plane -c control-plane | jq -c 'select(.msg == "control 
 fire GitHubMilestoneCheck loadgen
 sleep 90
 milestones | jq -c 'select(.msg | test("ticket|rca"))'
-# expect ticket.created with adapter "github" and an issue number as ref, rca.posted, and ticket.ready with
+# expect ticket.created with adapter "github" and an issue number as ref, rca.posted, advice.posted, and ticket.ready with
 # url https://github.com/<IC_GITHUB_REPO>/issues/<ref>
 curl -s -o /dev/null -w '%{http_code}\n' localhost:18080/tickets   # with a new port-forward: expect 404
 fire GitHubMilestoneCheck loadgen --end="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

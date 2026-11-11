@@ -12,9 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/itsankoff/incident-copilot/internal/action"
 	"github.com/itsankoff/incident-copilot/internal/audit"
 	"github.com/itsankoff/incident-copilot/internal/evidence"
 	"github.com/itsankoff/incident-copilot/internal/llm"
+	"github.com/itsankoff/incident-copilot/internal/store"
 )
 
 // Fake secrets, built from parts so no scanner mistakes this file for a leak.
@@ -73,9 +75,9 @@ func annotated(text string) map[string]any {
 
 func investigateWith(t *testing.T, l Link, model *recordingLLM, a map[string]any) *harness {
 	t.Helper()
-	h := startWith(t, t.TempDir(), &fakeTickets{}, prodAndStaging(), nil, func(log *audit.Log, tickets Ticketing, logger *slog.Logger, now func() time.Time) *Investigator {
+	h := startWith(t, t.TempDir(), &fakeTickets{}, prodAndStaging(), nil, func(_ *store.Store, log *audit.Log, tickets Ticketing, logger *slog.Logger, now func() time.Time) *Investigator {
 		ev := NewEvidence([]Location{{Name: "prod", Environment: "production", Token: "x"}}, l, log, now)
-		return NewInvestigator(model, "openrouter/free", testBudget, ev, tickets, log, logger, now)
+		return NewInvestigator(model, "openrouter/free", testBudget, ev, Remediation{}, tickets, log, logger, now)
 	})
 	h.send(tokenProd, a)
 	h.cp.Wait()
@@ -195,4 +197,85 @@ func TestToolOutputReachesTheLLMOnlyInsideTheUntrustedFrame(t *testing.T) {
 func mustJSON(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// recordedLLM keeps each request as the LLM received it, then answers as
+// next does, writing args into each Evidence tool call it makes.
+type recordedLLM struct {
+	mu   sync.Mutex
+	next llm.Client
+	args string
+	reqs []llm.Request
+}
+
+func (r *recordedLLM) Complete(ctx context.Context, req llm.Request) (llm.Response, error) {
+	r.mu.Lock()
+	r.reqs = append(r.reqs, req)
+	r.mu.Unlock()
+	resp, err := r.next.Complete(ctx, req)
+	for i, tc := range resp.Message.ToolCalls {
+		if r.args != "" && !strings.HasPrefix(tc.Name, "submit_") {
+			resp.Message.ToolCalls[i].Arguments = r.args
+		}
+	}
+	return resp, err
+}
+
+// The remediation loop's LLM calls take the same path as the RCA loop's:
+// every request redacted, every tool result framed as untrusted (ADR 0003 D4,
+// D8), with the Sensor-side pass off.
+func TestTheRemediationLoopGetsRedactedFramedEvidence(t *testing.T) {
+	line := "rollout of revision 4 failed key=" + fakeAWSKey + " auth " + fakeGHToken + " url " + presignedURL
+	l := leakyLink{answers: map[string]evidence.Answer{
+		"workload_state": {Data: json.RawMessage(`{"revision":"4","logs":[` + mustJSON(line) + `]}`)},
+	}}
+	model := &recordedLLM{next: remediate(t, func(_, ref string) string { return rollbackTo(ref) }), args: `{"note":"use ` + fakeGHToken + `"}`}
+	h := startWith(t, t.TempDir(), &fakeTickets{}, prodAndStaging(), nil, func(st *store.Store, log *audit.Log, tickets Ticketing, logger *slog.Logger, now func() time.Time) *Investigator {
+		ev := NewEvidence([]Location{{Name: "prod", Environment: "production", Token: "x"}}, l, log, now)
+		rem := Remediation{Executors: fakeExecutors{"prod": {rollback}}, Reviewed: []action.Declaration{rollback}, Policy: Policy{Ceilings: map[string]Level{"production": L2}}, KillSwitch: st}
+		return NewInvestigator(model, "openrouter/free", testBudget, ev, rem, tickets, log, logger, now)
+	})
+	h.send(tokenProd, alert("KubePodCrashLooping", "aaa", orders))
+	h.cp.Wait()
+
+	framed := 0
+	for i, req := range model.reqs {
+		if req.Tools[len(req.Tools)-1].Name != "submit_advice" {
+			continue
+		}
+		b, _ := json.Marshal(req)
+		for _, s := range secrets {
+			if strings.Contains(string(b), s) {
+				t.Errorf("remediation LLM request %d holds %q", i+1, s)
+			}
+		}
+		for _, m := range req.Messages {
+			for _, tc := range m.ToolCalls {
+				if !json.Valid([]byte(tc.Arguments)) {
+					t.Errorf("tool call arguments = %s, want valid JSON", tc.Arguments)
+				}
+			}
+			if m.Role != llm.Tool {
+				continue
+			}
+			if !strings.Contains(m.Content, "\n<untrusted-data>\n") || !strings.HasSuffix(m.Content, "\n</untrusted-data>") || !strings.Contains(m.Content, "failed key=[REDACTED]") {
+				t.Errorf("remediation tool result is not redacted and framed: %s", m.Content)
+			}
+			framed++
+		}
+	}
+	if framed == 0 {
+		t.Fatal("the remediation loop read no evidence")
+	}
+	if body := h.adviceComment("1"); !strings.Contains(body, "### Steps") {
+		t.Errorf("no Advice from the framed evidence:\n%s", body)
+	}
+	log := h.auditLog()
+	for _, e := range ofType(log, "llm.request") {
+		for _, s := range secrets {
+			if strings.Contains(string(e.Data), s) {
+				t.Errorf("audited llm.request holds %q", s)
+			}
+		}
+	}
 }
