@@ -231,7 +231,7 @@ sleep 20
 audit | jq -c --arg t "$T0" 'select(.time > $t) | [.seq, .type, .incident, (.data.name // .data.kind // .data.ref // .data.reason // "")]'
 ```
 
-Expect `signal.received` only for the three core alerts. The first `KubeNodeNotReady` opens an Incident and a ticket `KubeNodeNotReady from ic-target-alertmanager (no Target)`; the second joins it, with a `ticket.commented`. `KubeAPIErrorBudgetBurn` opens an Incident and ticket of its own. Neither is investigated: each has `investigation.skipped`, "the Incident has no Target". Nothing arrives for `PrometheusMissingRuleEvaluations` or `Watchdog`.
+Expect `signal.received` only for the three core alerts. The first `KubeNodeNotReady` opens an Incident and a ticket `[warning] KubeNodeNotReady from ic-target-alertmanager (no Target)`; the second joins it, with a `ticket.commented`. `KubeAPIErrorBudgetBurn` opens an Incident and ticket of its own. Neither is investigated: each has `investigation.skipped`, "the Incident has no Target". Nothing arrives for `PrometheusMissingRuleEvaluations` or `Watchdog`.
 
 Resolve them:
 
