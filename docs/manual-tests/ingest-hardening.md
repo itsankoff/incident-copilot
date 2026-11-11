@@ -86,7 +86,7 @@ post old-token "$RUN/resolved-unknown.json"   # 9
 
 | # | Request | HTTP | Expected on GitHub |
 |---|---|---|---|
-| 1 | `KubePodCrashLooping` on `demo`/`orders`, with the old token | 200 | New issue `KubePodCrashLooping on ic-target/demo/Deployment/orders`. |
+| 1 | `KubePodCrashLooping` on `demo`/`orders`, with the old token | 200 | New issue `[critical] KubePodCrashLooping on ic-target/demo/Deployment/orders`. |
 | 2 | The same payload with the new token: an HA pair's second member, or a sender already rotated | 200 | Nothing. Both tokens belong to one Signal source, so it is the same key and a repeat notice. |
 | 3 | Wrong token | 401 | Nothing. |
 | 4 | Unparseable body | 400 | Nothing. |
@@ -197,7 +197,7 @@ sleep 20
 audit | jq -c '[.seq, .type, .incident, (.data.kind // .data.ref // "")]'
 ```
 
-Within about 10 seconds (`group_wait`), expect `signal.received`, `triage.decision` (`open`), and `ticket.created`. A new issue `ManualRouteCheck on ic-target/demo/Deployment/orders` appears in the tickets repository. The demo's other alerts can arrive too, if any are firing. `Watchdog` never does.
+Within about 10 seconds (`group_wait`), expect `signal.received`, `triage.decision` (`open`), and `ticket.created`. A new issue `[warning] ManualRouteCheck on ic-target/demo/Deployment/orders` appears in the tickets repository. The demo's other alerts can arrive too, if any are firing. `Watchdog` never does.
 
 Resolve it. With `send_resolved: true`, Alertmanager sends the resolved notice after `group_interval` (1 minute):
 
@@ -206,7 +206,7 @@ am amtool alert add ManualRouteCheck severity=warning namespace=demo deployment=
   --end="$(date -u +%Y-%m-%dT%H:%M:%SZ)" --alertmanager.url=http://localhost:9093
 sleep 75
 audit | jq -c 'select(.type == "triage.decision") | [.seq, .data.kind, (.data.reason // "")]'
-# expect a last entry: drop, "resolved Signals are not handled yet" (resolving Incidents is #45)
+# expect a last entry: resolve. The issue gets a "Resolved" comment with outcome resolved, and stays open.
 ```
 
 If nothing arrives, check `am wget -qO- http://localhost:9093/metrics | grep notifications_failed_total`. If the count grows, Alertmanager cannot reach the Control plane at `ic-control-plane-control-plane:30080` or its token is wrong, and the Alertmanager log says which: `kubectl --context kind-ic-target -n monitoring logs alertmanager-kps-alertmanager-0 -c alertmanager | tail`.

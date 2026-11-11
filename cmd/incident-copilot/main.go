@@ -116,6 +116,21 @@ func runControlPlane(ctx context.Context, logger *slog.Logger) error {
 	errc := make(chan error, 3)
 	go func() { errc <- srv.ListenAndServe() }()
 	go func() { errc <- debug.ListenAndServe() }()
+	go func() {
+		// Expiry, idle closes, and tickets closed by a human are noticed here.
+		t := time.NewTicker(controlplane.SweepEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if err := cp.Sweep(ctx); err != nil {
+					logger.Error("sweep: " + err.Error())
+				}
+			}
+		}
+	}()
 	hubDone := make(chan struct{})
 	go func() {
 		defer close(hubDone)
@@ -151,7 +166,8 @@ func runSensor(ctx context.Context, logger *slog.Logger) error {
 }
 
 // logTickets is the fake ticketing adapter: it logs each ticket instead of
-// writing it anywhere. References count up from log-1 per process.
+// writing it anywhere, and its tickets are never closed by a human.
+// References count up from log-1 per process.
 type logTickets struct {
 	logger *slog.Logger
 	mu     sync.Mutex
@@ -169,5 +185,17 @@ func (l *logTickets) Create(_ context.Context, title, body string) (string, erro
 
 func (l *logTickets) Comment(_ context.Context, ref, body string) error {
 	l.logger.Info("ticket comment", "ref", ref, "body", body)
+	return nil
+}
+
+func (l *logTickets) State(context.Context, string) (bool, string, error) { return false, "", nil }
+
+func (l *logTickets) Close(_ context.Context, ref string) error {
+	l.logger.Info("ticket closed", "ref", ref)
+	return nil
+}
+
+func (l *logTickets) SetTitle(_ context.Context, ref, title string) error {
+	l.logger.Info("ticket retitled", "ref", ref, "title", title)
 	return nil
 }

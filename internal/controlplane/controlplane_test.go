@@ -33,12 +33,60 @@ const (
 type ticket struct{ ref, title, body string }
 type comment struct{ ref, body string }
 
-// fakeTickets records what the Control plane writes to the ticketing system.
+// fakeTickets records what the Control plane writes to the ticketing system,
+// and holds each ticket's state.
 type fakeTickets struct {
 	mu       sync.Mutex
 	created  []ticket
 	comments []comment
+	closes   []string          // refs the Control plane closed
+	retitled []ticket          // title changes, without a body
+	closed   map[string]string // ref to close reason, by anyone
 	fail     bool
+}
+
+// closeByHuman closes ticket ref with reason, as a human would.
+func (f *fakeTickets) closeByHuman(ref, reason string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.closed == nil {
+		f.closed = map[string]string{}
+	}
+	f.closed[ref] = reason
+}
+
+func (f *fakeTickets) State(_ context.Context, ref string) (bool, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail {
+		return false, "", errors.New("ticketing down")
+	}
+	reason, ok := f.closed[ref]
+	return ok, reason, nil
+}
+
+func (f *fakeTickets) Close(_ context.Context, ref string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail {
+		return errors.New("ticketing down")
+	}
+	f.closes = append(f.closes, ref)
+	if f.closed == nil {
+		f.closed = map[string]string{}
+	}
+	f.closed[ref] = "completed"
+	return nil
+}
+
+func (f *fakeTickets) SetTitle(_ context.Context, ref, title string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail {
+		return errors.New("ticketing down")
+	}
+	f.retitled = append(f.retitled, ticket{ref: ref, title: title})
+	return nil
 }
 
 func (f *fakeTickets) Create(_ context.Context, title, body string) (string, error) {
@@ -449,10 +497,10 @@ func TestResolvedForUnknownKeyIsAuditedAndDropped(t *testing.T) {
 	}
 }
 
-// failingStore fails every read of the open Incidents.
+// failingStore fails every read of the Incidents.
 type failingStore struct{ *store.Store }
 
-func (failingStore) OpenIncidents(context.Context) ([]triage.Incident, error) {
+func (failingStore) Incidents(context.Context) ([]triage.Incident, error) {
 	return nil, errors.New("disk I/O error")
 }
 
@@ -581,7 +629,7 @@ func TestHAPairDuplicateIsOneIncident(t *testing.T) {
 		t.Fatalf("second member: status %d", code)
 	}
 
-	open, err := h.store.OpenIncidents(context.Background())
+	open, err := h.store.Incidents(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

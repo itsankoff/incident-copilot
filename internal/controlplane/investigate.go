@@ -115,7 +115,9 @@ type investigation struct {
 }
 
 // Run investigates inc, runs Gate 1 on the answer, and comments the RCA on
-// inc's ticket. It returns only audit and ticketing failures.
+// inc's ticket. When ctx is cancelled, because the Incident closed, it stops,
+// audits the cause, and writes nothing to the ticket. It returns only audit
+// and ticketing failures.
 func (v *Investigator) Run(ctx context.Context, inc triage.Incident) error {
 	if inc.Target == nil {
 		// The Evidence tools read a Target; with none there is nothing to read.
@@ -131,6 +133,11 @@ func (v *Investigator) Run(ctx context.Context, inc triage.Incident) error {
 	if err != nil {
 		return err
 	}
+	if ctx.Err() != nil {
+		return v.audit.Append(v.now(), "investigation.cancelled", inc.ID, map[string]any{
+			"reason": context.Cause(ctx).Error(), "steps": inv.steps, "tokens": inv.tokens,
+		})
+	}
 	failures := gate1(inv.rca, inv.ledger)
 	// What the ticket shows: the submitted RCA, its failures, and the
 	// confidence after Gate 1.
@@ -145,7 +152,23 @@ func (v *Investigator) Run(ctx context.Context, inc triage.Incident) error {
 	}); err != nil {
 		return err
 	}
-	if err := v.tickets.Comment(ctx, inc.TicketRef, v.render(inv, failures)); err != nil {
+	// The ticket's state wins: an RCA is never posted on a closed ticket.
+	closed, reason, err := v.tickets.State(ctx, inc.TicketRef)
+	if err == nil && closed {
+		return v.audit.Append(v.now(), "investigation.cancelled", inc.ID, map[string]any{
+			"reason": fmt.Sprintf("ticket %s was closed by a human (%s) before the RCA was posted", inc.TicketRef, reason),
+			"steps":  inv.steps, "tokens": inv.tokens,
+		})
+	}
+	if err == nil {
+		err = v.tickets.Comment(ctx, inc.TicketRef, v.render(inv, failures))
+	}
+	if err != nil {
+		if ctx.Err() != nil {
+			return v.audit.Append(v.now(), "investigation.cancelled", inc.ID, map[string]any{
+				"reason": context.Cause(ctx).Error(), "steps": inv.steps, "tokens": inv.tokens,
+			})
+		}
 		return err
 	}
 	return v.audit.Append(v.now(), "ticket.commented", inc.ID, map[string]string{"ref": inc.TicketRef, "kind": "rca"})
