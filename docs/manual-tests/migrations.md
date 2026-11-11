@@ -1,6 +1,6 @@
 # Manual test: Store migrations
 
-This test checks the Control plane store's goose migrations (issue #94) on your machine:
+This test checks the goose migrations of the Control plane's two databases (issue #94), the state and the demo's local tickets, on your machine:
 - running `make migrate` against a local file;
 - creating a SQL migration and a Go data migration;
 - adopting a database that the store's old in-code DDL built;
@@ -15,7 +15,7 @@ Everything runs locally against files under `build/dev/`. Nothing touches a clus
 
 - **Go**, at the version in `go.mod`.
 - **The `sqlite3` CLI**, to load the fixtures and look inside the files. It ships with macOS. On Linux, install `sqlite3`.
-- **A clean tree.** Steps 2 and 3 create migration files and step 8 commits on a scratch branch, and each step removes what it created.
+- **A clean tree.** Steps 2, 3 and 6 create migration files and step 8 commits on a scratch branch, and each step removes what it created.
 
 Run every command from the repository root, in one shell (bash or zsh).
 
@@ -125,21 +125,34 @@ for s in pre85 post85 post88; do diff <(cols build/dev/state.db) <(cols build/de
 
 Running `make migrate DB=build/dev/post88.db CMD=up` a second time applies nothing: expect no `migration completed` line.
 
-## 5. The Control plane adopts a database when it starts
-
-This is what happens on the demo's volume on the next deploy, here on a local copy:
+The tickets database adopts the same way. `internal/localtickets/testdata/post91.sql` is a tickets database that PR #91's code wrote, with two tickets and one comment:
 
 ```sh
-rm -f build/dev/cp.db && sqlite3 build/dev/cp.db < internal/store/testdata/pre85.sql
-go build -o build/dev/cp ./cmd/incident-copilot
-IC_STATE_PATH=build/dev/cp.db IC_AUDIT_PATH=build/dev/cp-audit.jsonl \
+rm -f build/dev/tickets.db && sqlite3 build/dev/tickets.db < internal/localtickets/testdata/post91.sql
+make migrate SCHEMA=tickets CMD=up >/dev/null 2>&1
+make migrate SCHEMA=tickets
+# expect: 1  applied  00001_baseline.sql
+sqlite3 build/dev/tickets.db "SELECT count(*) FROM tickets; SELECT count(*) FROM comments"
+# expect 2, then 1
+```
+
+## 5. The Control plane adopts a database when it starts
+
+This is what happens on the demo's volume on the next deploy, here on local copies. With no GitHub configured, the Control plane uses the local tickets, in `tickets.db` next to the state:
+
+```sh
+rm -rf build/dev/cp && mkdir -p build/dev/cp
+sqlite3 build/dev/cp/state.db < internal/store/testdata/pre85.sql
+sqlite3 build/dev/cp/tickets.db < internal/localtickets/testdata/post91.sql
+go build -o build/dev/cp/cp ./cmd/incident-copilot
+IC_STATE_PATH=build/dev/cp/state.db IC_AUDIT_PATH=build/dev/cp/audit.jsonl \
 IC_LISTEN_ADDR=127.0.0.1:28480 IC_DEBUG_ADDR=127.0.0.1:28481 \
 IC_ALERTMANAGER_INSTANCE=ic-target IC_ALERTMANAGER_TOKEN=t IC_ALERTMANAGER_LOCATION=ic-target \
-  build/dev/cp -role=control-plane | grep -E 'store migration applied|control plane listening'
+  build/dev/cp/cp -role=control-plane | grep -E '"migration applied"|control plane listening'
 # stop it with Ctrl-C once it logs "control plane listening"
 ```
 
-Expect one `store migration applied` line for each migration, with `migration` and `source`, then `control plane listening`. Run it again: expect no `store migration applied` line. Pick other ports if 28480 or 28481 are taken.
+Expect a `migration applied` line for each migration, each with `database`, `migration` and `source`: first the state's, then `tickets.db`'s `00001_baseline.sql`. Then expect `control plane listening`. Run it again: expect no `migration applied` line. Pick other ports if 28480 or 28481 are taken.
 
 ## 6. A failing migration rolls back whole
 
@@ -151,13 +164,13 @@ INSERT INTO nope VALUES (1);
 -- +goose Down
 DROP TABLE later;
 EOF
-make migrate DB=build/dev/cp.db CMD=up; echo "exit=$?"
+make migrate DB=build/dev/cp/state.db CMD=up; echo "exit=$?"
 ```
 
 Expect `partial migration error (type:sql,version:99999): SQL logic error: no such table: nope` and a non-zero exit. Nothing changed:
 
 ```sh
-sqlite3 build/dev/cp.db "SELECT max(version_id) FROM goose_db_version; SELECT count(*) FROM sqlite_master WHERE name = 'later'"
+sqlite3 build/dev/cp/state.db "SELECT max(version_id) FROM goose_db_version; SELECT count(*) FROM sqlite_master WHERE name = 'later'"
 # expect the previous version, then 0
 rm internal/store/migrations/99999_manual_broken.sql
 ```
@@ -171,10 +184,10 @@ On the long-lived demo with an existing `control-plane-state` volume, deploy thi
 ```sh
 make control-plane VERSION="$(git rev-parse --short HEAD)-$(date +%s)"
 kubectl --context kind-ic-control-plane -n incident-copilot logs deploy/control-plane -c control-plane \
-  | jq -c 'select(.msg == "store migration applied" or .msg == "control plane listening") | {msg, migration, source, version}'
+  | jq -c 'select(.msg == "migration applied" or .msg == "control plane listening") | {msg, database, migration, source, version}'
 ```
 
-Expect a `store migration applied` line for each migration on the first start after the upgrade, then `control plane listening`. Incidents opened before the upgrade keep their tickets: a firing alert joins its existing Incident rather than opening a new ticket. A later restart logs no `store migration applied` line.
+Expect a `migration applied` line for each migration of each database on the first start after the upgrade, then `control plane listening`. Incidents opened before the upgrade keep their tickets: a firing alert joins its existing Incident rather than opening a new ticket. With the local tickets, `/tickets` still lists the tickets from before the upgrade. A later restart logs no `migration applied` line.
 
 ## 8. Merged migrations cannot change
 
@@ -197,6 +210,6 @@ Renaming (`R`) or deleting (`D`) a merged migration fails the same way. Adding a
 ## Clean up
 
 ```sh
-rm -f build/dev/*.db build/dev/cp build/dev/cp-audit.jsonl
+rm -rf build/dev/*.db build/dev/cp
 git status --short internal/store/migrations   # expect nothing
 ```

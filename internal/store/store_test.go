@@ -31,7 +31,7 @@ func save(t *testing.T, st *Store, inc triage.Incident) int64 {
 }
 
 func TestLifecycleRoundTrips(t *testing.T) {
-	st, err := Open(filepath.Join(t.TempDir(), "state.db"), quiet)
+	st, err := Open(context.Background(), filepath.Join(t.TempDir(), "state.db"), quiet)
 	if err != nil {
 		t.Fatal(err)
 	}

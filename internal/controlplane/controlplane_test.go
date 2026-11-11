@@ -152,7 +152,7 @@ func start(t *testing.T, dir string, tickets *fakeTickets, sources []signal.Sour
 func startWith(t *testing.T, dir string, tickets *fakeTickets, sources []signal.Source, wrap func(*store.Store) Store,
 	inv func(*store.Store, *audit.Log, Ticketing, *slog.Logger, func() time.Time) *Investigator) *harness {
 	t.Helper()
-	st, err := store.Open(filepath.Join(dir, "state.db"), slog.New(slog.DiscardHandler))
+	st, err := store.Open(context.Background(), filepath.Join(dir, "state.db"), slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

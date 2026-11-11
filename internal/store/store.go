@@ -11,9 +11,9 @@ import (
 	"log/slog"
 	"time"
 
-	_ "modernc.org/sqlite"
-
+	"github.com/itsankoff/incident-copilot/internal/migrate"
 	"github.com/itsankoff/incident-copilot/internal/signal"
+	"github.com/itsankoff/incident-copilot/internal/store/migrations"
 	"github.com/itsankoff/incident-copilot/internal/triage"
 )
 
@@ -21,19 +21,18 @@ type Store struct {
 	db *sql.DB
 }
 
+// Migrations is the store's schema history, which Open applies.
+var Migrations = migrate.Migrations{FS: migrations.FS, Go: migrations.Go}
+
 // Open opens or creates the database at path and applies its pending
 // migrations, logging each one to log. It fails with the migration's error
 // if one fails; that migration has then rolled back whole.
-func Open(path string, log *slog.Logger) (*Store, error) {
-	db, err := OpenDB(path)
+func Open(ctx context.Context, path string, log *slog.Logger) (*Store, error) {
+	db, err := migrate.OpenDB(path)
 	if err != nil {
 		return nil, err
 	}
-	p, err := NewMigrator(db, nil)
-	if err == nil {
-		err = migrate(context.Background(), db, p, log)
-	}
-	if err != nil {
+	if err := migrate.Apply(ctx, db, Migrations, log.With("database", path)); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("store %s: %w", path, err)
 	}

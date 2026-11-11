@@ -1,13 +1,16 @@
-// Command migrate runs the Control plane store's migrations against a local
-// SQLite file, through the same goose Provider store.Open uses, so it sees
-// the Go migrations too. For development only: the Control plane migrates
-// its own database when it starts.
+// Command migrate runs a Control plane database's migrations against a local
+// SQLite file, through the same runner the Control plane uses when it opens
+// the database, so it sees the Go migrations too. For development only: the
+// Control plane migrates its own databases when it starts.
 //
-//	migrate [-db FILE] status                each migration, applied or pending
-//	migrate [-db FILE] up                    apply every pending migration
-//	migrate [-db FILE] down                  undo the last applied migration
-//	migrate [-db FILE] redo                  undo the last applied migration and apply it again
-//	migrate [-dir DIR] create NAME [sql|go]  write the next numbered migration: SQL, or a Go data migration
+//	migrate [flags] status                each migration, applied or pending
+//	migrate [flags] up                    apply every pending migration
+//	migrate [flags] down                  undo the last applied migration
+//	migrate [flags] redo                  undo the last applied migration and apply it again
+//	migrate [flags] create NAME [sql|go]  write the next numbered migration: SQL, or a Go data migration
+//
+// -schema picks the database: state (the store, the default) or tickets (the
+// demo's local tickets).
 package main
 
 import (
@@ -23,8 +26,21 @@ import (
 
 	"github.com/pressly/goose/v3"
 
+	"github.com/itsankoff/incident-copilot/internal/localtickets"
+	"github.com/itsankoff/incident-copilot/internal/migrate"
 	"github.com/itsankoff/incident-copilot/internal/store"
 )
+
+// schemas are the Control plane's databases: their migrations, and the
+// directory that holds them.
+var schemas = map[string]struct {
+	migrations   migrate.Migrations
+	dir          string
+	goMigrations bool // whether the directory's package has register, for Go migrations
+}{
+	"state":   {store.Migrations, "internal/store/migrations", true},
+	"tickets": {localtickets.Migrations, "internal/localtickets/migrations", false},
+}
 
 func main() {
 	if err := run(context.Background(), os.Args[1:], os.Stdout); err != nil {
@@ -35,8 +51,9 @@ func main() {
 
 func run(ctx context.Context, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
-	path := fs.String("db", "build/dev/state.db", "the SQLite file to migrate")
-	dir := fs.String("dir", "internal/store/migrations", "where create writes the new migration")
+	name := fs.String("schema", "state", "the database: state or tickets")
+	path := fs.String("db", "", "the SQLite file to migrate (default build/dev/<schema>.db)")
+	dir := fs.String("dir", "", "where create writes the new migration (default the schema's migrations directory)")
 	fs.Usage = func() {
 		_, _ = fmt.Fprintln(fs.Output(), "usage: migrate [flags] status | up | down | redo | create NAME [sql|go]")
 		fs.PrintDefaults()
@@ -44,27 +61,37 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	schema, ok := schemas[*name]
+	if !ok {
+		return fmt.Errorf("unknown schema %q: want state or tickets", *name)
+	}
 	if fs.NArg() == 0 {
 		fs.Usage()
 		return errors.New("no command")
 	}
 	if fs.Arg(0) == "create" {
-		return create(*dir, fs.Args()[1:])
+		if *dir == "" {
+			*dir = schema.dir
+		}
+		return create(*dir, schema.goMigrations, fs.Args()[1:])
 	}
 
+	if *path == "" {
+		*path = filepath.Join("build", "dev", *name+".db")
+	}
 	if err := os.MkdirAll(filepath.Dir(*path), 0o755); err != nil {
 		return err
 	}
-	db, err := store.OpenDB(*path)
+	db, err := migrate.OpenDB(*path)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = db.Close() }()
-	p, err := store.NewMigrator(db, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	m, err := migrate.New(db, schema.migrations, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	if err != nil {
 		return err
 	}
-	return store.WithForeignKeysOff(ctx, db, func() error {
+	return m.Run(ctx, func(p *goose.Provider) error {
 		switch fs.Arg(0) {
 		case "status":
 			ss, err := p.Status(ctx)
@@ -92,7 +119,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 }
 
 // create writes the next sequentially numbered migration into dir.
-func create(dir string, args []string) error {
+func create(dir string, goMigrations bool, args []string) error {
 	kind := "sql"
 	if len(args) == 2 {
 		kind = args[1]
@@ -100,6 +127,9 @@ func create(dir string, args []string) error {
 	tmpl := map[string]*template.Template{"sql": sqlTemplate, "go": goTemplate}[kind]
 	if len(args) == 0 || len(args) > 2 || tmpl == nil {
 		return errors.New("usage: create NAME [sql|go]")
+	}
+	if kind == "go" && !goMigrations {
+		return fmt.Errorf("%s has no Go migrations yet: add a register function like internal/store/migrations' first", dir)
 	}
 	goose.SetSequential(true)
 	return goose.CreateWithTemplate(nil, dir, tmpl, args[0], kind)

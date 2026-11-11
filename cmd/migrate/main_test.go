@@ -71,3 +71,26 @@ func TestCommandsOnALocalFile(t *testing.T) {
 		t.Fatal("an unknown command succeeded")
 	}
 }
+
+// -schema tickets runs the tickets database's migrations, which have no Go
+// migrations to create.
+func TestTicketsSchema(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "tickets.db")
+	ctx := context.Background()
+	if err := run(ctx, []string{"-schema", "tickets", "-db", db, "up"}, new(strings.Builder)); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := run(ctx, []string{"-schema", "tickets", "-db", db, "status"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "applied  00001_baseline.sql") || strings.Contains(out.String(), "adopt_legacy") {
+		t.Fatalf("status of the tickets database:\n%s", out.String())
+	}
+	if err := run(ctx, []string{"-schema", "tickets", "-dir", t.TempDir(), "create", "x", "go"}, new(strings.Builder)); err == nil {
+		t.Fatal("created a Go migration for tickets, which has no register")
+	}
+	if err := run(ctx, []string{"-schema", "nope", "status"}, new(strings.Builder)); err == nil {
+		t.Fatal("an unknown schema succeeded")
+	}
+}

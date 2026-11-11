@@ -79,21 +79,23 @@ tools: ## Check that required tools are installed
 	fi; \
 	echo "tools ok (go $$gv, kind $$kv, helm $$(helm version --short))"
 
-##@ Store migrations
+##@ Migrations
 
-# The local store file make migrate works on, and the branch whose migrations
-# count as merged.
-DB   ?= build/dev/state.db
-BASE ?= origin/master
+# The database make migration and make migrate work on: state (the store) or
+# tickets (the demo's local tickets); its local file; and the branch whose
+# migrations count as merged.
+SCHEMA ?= state
+DB     ?= build/dev/$(SCHEMA).db
+BASE   ?= origin/master
 
 .PHONY: migration
-migration: ## Write the next numbered store migration (NAME=add_thing, KIND=go for a Go data migration)
-	@[ -n "$(NAME)" ] || { echo "usage: make migration NAME=<snake_name> [KIND=sql|go]"; exit 1; }
-	go run ./cmd/migrate create $(NAME) $(KIND)
+migration: ## Write the next numbered migration (NAME=add_thing, KIND=go for a Go data migration, SCHEMA=state|tickets)
+	@[ -n "$(NAME)" ] || { echo "usage: make migration NAME=<snake_name> [KIND=sql|go] [SCHEMA=state|tickets]"; exit 1; }
+	go run ./cmd/migrate -schema $(SCHEMA) create $(NAME) $(KIND)
 
 .PHONY: migrate
-migrate: ## Run a migration command on a local store file (CMD=status|up|down|redo, DB=build/dev/state.db)
-	go run ./cmd/migrate -db $(DB) $(or $(CMD),status)
+migrate: ## Run a migration command on a local file (CMD=status|up|down|redo, SCHEMA=state|tickets, DB=build/dev/<schema>.db)
+	go run ./cmd/migrate -schema $(SCHEMA) -db $(DB) $(or $(CMD),status)
 
 .PHONY: check-migrations
 check-migrations: ## Fail if a migration merged on BASE (origin/master) was edited, renamed, or deleted

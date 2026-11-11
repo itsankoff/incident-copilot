@@ -67,7 +67,7 @@ func runControlPlane(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 
-	st, err := store.Open(cfg.StatePath, logger)
+	st, err := store.Open(ctx, cfg.StatePath, logger)
 	if err != nil {
 		return err
 	}
@@ -85,7 +85,7 @@ func runControlPlane(ctx context.Context, logger *slog.Logger) error {
 		tickets = github.New(gh.APIURL, gh.Repo, gh.Token, &http.Client{Timeout: 30 * time.Second})
 		repo = gh.Repo
 	} else {
-		local, err := localtickets.Open(filepath.Join(filepath.Dir(cfg.StatePath), "tickets.db"), time.Now)
+		local, err := localtickets.Open(ctx, filepath.Join(filepath.Dir(cfg.StatePath), "tickets.db"), time.Now, logger)
 		if err != nil {
 			return err
 		}
