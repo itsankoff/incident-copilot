@@ -233,9 +233,9 @@ The Control plane rejects a request body over 1 MiB with `413`. It cuts each lab
 | `IC_SENSOR_LOCATION` | required (Sensor) | Location this Sensor serves |
 | `IC_CONTROL_PLANE_URL` | required (Sensor, Executor) | Control plane address the Sensor or Executor dials |
 | `IC_SENSOR_TOKEN` | required (Sensor) | The token `IC_LOCATIONS` holds for this Location |
+| `IC_SENSOR_NAMESPACES` | required (Sensor) | Comma-separated namespaces the Sensor's Detectors watch |
 | `IC_EXECUTOR_LOCATION` | required (Executor) | Location this Executor serves |
 | `IC_EXECUTOR_TOKEN` | required (Executor) | The token `IC_LOCATIONS` holds for this Location: the link stand-in authenticates a Location, not a role |
-| `IC_SENSOR_NAMESPACES` | required (Sensor) | Comma-separated namespaces the Sensor's Detectors watch |
 
 ## Design choices
 
