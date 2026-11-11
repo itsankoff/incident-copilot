@@ -38,7 +38,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 	}
 }
 
-// Without GitHub settings the Control plane runs with the fake ticketing
+// Without GitHub settings the Control plane runs with the local ticketing
 // adapter; a half-set pair is a mistake, not a choice.
 func TestLoadConfigGitHub(t *testing.T) {
 	cfg, err := LoadConfig(envMap(required()))

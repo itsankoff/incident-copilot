@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -24,6 +25,10 @@ import (
 type Ticketing interface {
 	Create(ctx context.Context, title, body string) (ref string, err error)
 	Comment(ctx context.Context, ref, body string) error
+	// Name names the adapter in the Control plane's log.
+	Name() string
+	// URL is where a human reads ticket ref, or "" when the adapter cannot say.
+	URL(ref string) string
 }
 
 // Store is the Control plane's state; *store.Store implements it.
@@ -37,6 +42,7 @@ type Server struct {
 	store        Store
 	tickets      Ticketing
 	audit        *audit.Log
+	logger       *slog.Logger // milestones for humans; the audit log is the record
 	now          func() time.Time
 	investigator *Investigator // nil: Incidents are not investigated
 
@@ -44,8 +50,8 @@ type Server struct {
 	investigations sync.WaitGroup
 }
 
-func New(alertmanager signal.Adapter, st Store, tickets Ticketing, log *audit.Log, now func() time.Time, inv *Investigator) *Server {
-	return &Server{alertmanager: alertmanager, store: st, tickets: tickets, audit: log, now: now, investigator: inv}
+func New(alertmanager signal.Adapter, st Store, tickets Ticketing, log *audit.Log, logger *slog.Logger, now func() time.Time, inv *Investigator) *Server {
+	return &Server{alertmanager: alertmanager, store: st, tickets: tickets, audit: log, logger: logger, now: now, investigator: inv}
 }
 
 // Wait returns once every investigation started so far has finished.
@@ -141,7 +147,11 @@ func (s *Server) ingest(ctx context.Context, sig signal.Signal, now time.Time) e
 		decision["reason"] = d.Reason
 	}
 	if d.Kind == triage.Drop {
-		return s.auditDecision(sig, decision, 0, now)
+		if err := s.auditDecision(sig, decision, 0, now); err != nil {
+			return err
+		}
+		s.logSignal(ctx, sig, d.Kind, 0)
+		return nil
 	}
 
 	// One transaction per Signal: if the ticket write fails, nothing is stored,
@@ -183,6 +193,14 @@ func (s *Server) ingest(ctx context.Context, sig signal.Signal, now time.Time) e
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	// Logged once stored, so a Signal the source must re-send logs nothing.
+	s.logSignal(ctx, sig, d.Kind, inc.ID)
+	switch d.Kind {
+	case triage.Open:
+		s.logger.Info("ticket.created", "incident", inc.ID, "adapter", s.tickets.Name(), "ref", inc.TicketRef, "kind", "incident")
+	case triage.Join:
+		s.logger.Info("ticket.commented", "incident", inc.ID, "adapter", s.tickets.Name(), "ref", inc.TicketRef, "kind", "signal")
+	}
 	if d.Kind == triage.Open && s.investigator != nil {
 		// The investigation outlives the request that opened the Incident.
 		ictx := context.WithoutCancel(ctx)
@@ -191,6 +209,7 @@ func (s *Server) ingest(ctx context.Context, sig signal.Signal, now time.Time) e
 			defer s.investigations.Done()
 			if err := s.investigator.Run(ictx, inc); err != nil {
 				_ = s.audit.Append(s.now(), "investigation.failed", inc.ID, map[string]string{"error": err.Error()})
+				s.logger.Error("investigation.failed", "incident", inc.ID, "error", err.Error())
 			}
 		}()
 	}
@@ -202,6 +221,22 @@ func (s *Server) auditDecision(sig signal.Signal, decision map[string]any, incid
 		return err
 	}
 	return s.audit.Append(now, "triage.decision", incident, decision)
+}
+
+// logSignal logs a Signal and its Triage decision with names only. A repeat
+// notice or a dropped Signal changes nothing a reader follows, so it logs at
+// debug level.
+func (s *Server) logSignal(ctx context.Context, sig signal.Signal, kind triage.Kind, incident int64) {
+	level := slog.LevelDebug
+	if kind == triage.Open || kind == triage.Join {
+		level = slog.LevelInfo
+	}
+	target := ""
+	if sig.Target != nil {
+		target = sig.Target.String()
+	}
+	s.logger.Log(ctx, level, "signal.received", "incident", incident, "source", sig.Source.Kind+"/"+sig.Source.Instance, "name", sig.Name, "target", target)
+	s.logger.Log(ctx, level, "triage.decision", "incident", incident, "decision", string(kind))
 }
 
 // The ticket shows identifiers only, never Alert annotations.
