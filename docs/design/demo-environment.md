@@ -66,7 +66,7 @@ Both clusters' nodes are containers on kind's Docker network, `kind`, which reso
 
 Everything in `monitoring` and `logging` is installed with Helm from values files under `deploy/observability/`. kube-prometheus-stack scrape jobs for etcd, the scheduler, the controller manager, and kube-proxy are disabled because they are unreachable in kind and would fire noise alerts. `NodeClockNotSynchronising` is disabled too, because Docker Desktop's VM does not report NTP sync state. The upstream `kubernetesApps` rules are off, so the workload alerts that fire are exactly the ones in `alerts.yaml`.
 
-The observability settings are tuned for speed: a 15 s scrape interval, 15 s rule evaluation, Alertmanager `group_wait: 10s`, `group_interval: 30s`, and `repeat_interval: 1h`.
+The observability settings are tuned for speed: a 15 s scrape interval, 15 s rule evaluation, Alertmanager `group_wait: 10s`, `group_interval: 1m`, and `repeat_interval: 5m`.
 
 ## Demo service: `demo-svc`
 
