@@ -191,6 +191,25 @@ sensor: ## Build incident-copilot, load it into ic-target, and deploy the Sensor
 	$(TARGET_KUBECTL) apply -k build/sensor
 	$(TARGET_KUBECTL) -n incident-copilot rollout status deploy/sensor --timeout 180s
 
+.PHONY: executor
+executor: ## Build incident-copilot, load it into ic-target, and deploy the Executor, which dials out to the Control plane and advertises its Actions
+	docker build --build-arg BIN=incident-copilot --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(CP_IMAGE) .
+	kind load docker-image $(CP_IMAGE) --name $(TARGET_CLUSTER)
+	@rm -rf build/executor && mkdir -p build/executor
+	@# The link stand-in authenticates a Location, not a role: the Executor presents the Sensor's token.
+	@printf '%s\n' \
+	  'apiVersion: kustomize.config.k8s.io/v1beta1' \
+	  'kind: Kustomization' \
+	  'resources: [../../deploy/executor]' \
+	  'images: [{name: incident-copilot, newName: incident-copilot, newTag: "$(VERSION)"}]' \
+	  'secretGenerator:' \
+	  '  - name: incident-copilot-executor' \
+	  '    namespace: incident-copilot' \
+	  '    literals: ["IC_EXECUTOR_TOKEN=$(IC_SENSOR_TOKEN)"]' \
+	  > build/executor/kustomization.yaml
+	$(TARGET_KUBECTL) apply -k build/executor
+	$(TARGET_KUBECTL) -n incident-copilot rollout status deploy/executor --timeout 180s
+
 .PHONY: status
 status: ## Show pods in ic-target (demo, monitoring, logging, incident-copilot) and ic-control-plane (incident-copilot)
 	@echo "== $(TARGET_CLUSTER)"

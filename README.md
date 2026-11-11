@@ -193,7 +193,9 @@ make eval                  # run the evaluation harness across all fault scenari
 
 ## Configuration
 
-`incident-copilot -role control-plane` reads its configuration from environment variables. It serves the Alertmanager webhook at `/webhook/alertmanager`, and Alertmanager must send `Authorization: Bearer <IC_ALERTMANAGER_TOKEN>`. It also serves the Sensor link at `/link/`. `incident-copilot -role sensor` dials out to it; `make sensor` deploys one into `ic-target`. The `executor` role is not implemented yet.
+`incident-copilot -role control-plane` reads its configuration from environment variables. It serves the Alertmanager webhook at `/webhook/alertmanager`, and Alertmanager must send `Authorization: Bearer <IC_ALERTMANAGER_TOKEN>`. It also serves the Sensor link at `/link/`. `incident-copilot -role sensor` dials out to it; `make sensor` deploys one into `ic-target`. `incident-copilot -role executor` dials out the same way and advertises its Actions, `rollback_deployment` for now; `make executor` deploys one into `ic-target`. The Control plane offers an advertised Action only when it matches the declaration in its own code exactly. It runs no Action yet (#57), so every Advice is shown at L1 in the ticket, with the steps to carry out by hand and the reason for each cap.
+
+The kill switch caps every later decision at its level, with no restart. Set it on the debug listener with `curl -X PUT localhost:8081/debug/kill-switch -d '{"level":"L1"}'` (L0, L1, or L2; `""` clears it), through `kubectl port-forward` in a cluster. It lives in the store and is audited as `killswitch.set`.
 
 For local runs, copy [`.env.demo.example`](.env.demo.example) to `.env.demo`, which is gitignored, and fill in the secrets. `make control-plane` turns `.env.demo` into the `incident-copilot-env` Secret in `ic-control-plane`. Without `IC_GITHUB_REPO` and `IC_GITHUB_TOKEN`, the Control plane starts with a fake ticketing adapter that only logs tickets, and it logs that it did.
 
@@ -212,7 +214,7 @@ The Control plane rejects a request body over 1 MiB with `413`. It cuts each lab
 | Variable | Default | Meaning |
 |---|---|---|
 | `IC_LISTEN_ADDR` | `:8080` | HTTP listen address |
-| `IC_STATE_PATH` | `incident-copilot.db` | SQLite file holding Incidents and ticket references |
+| `IC_STATE_PATH` | `incident-copilot.db` | SQLite file holding Incidents, ticket references, and the kill switch |
 | `IC_AUDIT_PATH` | `audit.jsonl` | Hash-chained audit log |
 | `IC_ALERTMANAGER_INSTANCE` | required | Name of the Alertmanager Signal source, the prefix of every Signal key |
 | `IC_ALERTMANAGER_TOKEN` | required | Bearer token that Alertmanager sends. During rotation, two comma-separated tokens, both valid |
@@ -223,13 +225,16 @@ The Control plane rejects a request body over 1 MiB with `413`. It cuts each lab
 | `IC_LOCATIONS` | unset | Control plane: comma-separated `name:environment:token` entries, one per Location. A Sensor whose Location is not listed is refused |
 | `OPENROUTER_API_KEY` | unset | Control plane: OpenRouter API key for the RCA loop. Unset, Incidents get tickets but are not investigated |
 | `IC_LLM_MODEL` | `openrouter/free` | Control plane: model the RCA loop asks for. With `openrouter/free` each answer may come from another free model; the audit log records which |
-| `IC_RCA_MAX_STEPS` | `8` | Control plane: LLM requests per investigation |
-| `IC_RCA_MAX_TOKENS` | `100000` | Control plane: input plus output tokens per investigation |
-| `IC_RCA_TIMEOUT` | `5m` | Control plane: wall-clock budget per investigation |
-| `IC_DEBUG_ADDR` | `127.0.0.1:8081` | Control plane: unauthenticated debug listener for Evidence queries and Location status. Keep it on loopback |
+| `IC_RCA_MAX_STEPS` | `8` | Control plane: LLM requests per loop, for the RCA loop and again for the remediation loop |
+| `IC_RCA_MAX_TOKENS` | `100000` | Control plane: input plus output tokens per loop |
+| `IC_RCA_TIMEOUT` | `5m` | Control plane: wall-clock budget per loop |
+| `IC_ENVIRONMENT_CEILINGS` | unset | Control plane: comma-separated `environment:level` entries, the autonomy ceiling of each Environment (`L0` to `L3`; this version stops at L2). An Environment not listed is treated as `production`. Unset or unparseable, every ceiling is L1 |
+| `IC_DEBUG_ADDR` | `127.0.0.1:8081` | Control plane: unauthenticated debug listener for Evidence queries, Location status, and the kill switch. Keep it on loopback |
 | `IC_SENSOR_LOCATION` | required (Sensor) | Location this Sensor serves |
-| `IC_CONTROL_PLANE_URL` | required (Sensor) | Control plane address the Sensor dials |
+| `IC_CONTROL_PLANE_URL` | required (Sensor, Executor) | Control plane address the Sensor or Executor dials |
 | `IC_SENSOR_TOKEN` | required (Sensor) | The token `IC_LOCATIONS` holds for this Location |
+| `IC_EXECUTOR_LOCATION` | required (Executor) | Location this Executor serves |
+| `IC_EXECUTOR_TOKEN` | required (Executor) | The token `IC_LOCATIONS` holds for this Location: the link stand-in authenticates a Location, not a role |
 
 ## Design choices
 

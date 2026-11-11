@@ -30,6 +30,9 @@ spec:
             - { name: IC_ALERTMANAGER_LOCATION, value: ic-target }
             - { name: IC_STATE_PATH, value: /var/lib/incident-copilot/state.db }
             - { name: IC_AUDIT_PATH, value: /var/lib/incident-copilot/audit.jsonl }
+            # Autonomy ceilings per Environment. Every Plan is still capped at L1
+            # until approval exists (#58).
+            - { name: IC_ENVIRONMENT_CEILINGS, value: "demo:L2,production:L1" }
           ports:
             - { name: http, containerPort: 8080 }
           readinessProbe:

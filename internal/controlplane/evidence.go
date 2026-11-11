@@ -84,6 +84,17 @@ func (e *Evidence) Query(ctx context.Context, incident int64, q evidence.Query) 
 	return evidence.Result{Ref: ref, Data: answer.Data}, nil
 }
 
+// environment is the Environment of the configured Location named location,
+// or "" when it is not configured.
+func (e *Evidence) environment(location string) string {
+	for _, l := range e.locations {
+		if l.Name == location {
+			return l.Environment
+		}
+	}
+	return ""
+}
+
 // LocationStatus is a configured Location and whether its Sensor is linked.
 type LocationStatus struct {
 	Name        string `json:"name"`

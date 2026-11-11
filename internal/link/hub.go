@@ -1,10 +1,15 @@
-// Package link is the stand-in for the Control plane ↔ Sensor link, whose
-// protocol, mutual authentication, and enrolment are not yet specified (ADR
-// 0002 D2). A Sensor dials out and long-polls over HTTP with its Location's
-// static token; nothing connects into a Location.
+// Package link is the stand-in for the Control plane ↔ Sensor and Executor
+// link, whose protocol, mutual authentication, and enrolment are not yet
+// specified (ADR 0002 D2). A Sensor or Executor dials out and long-polls over
+// HTTP with its Location's static token; nothing connects into a Location.
 //
-// A poll is GET /link/{location}/next, answered with the next Call or, after
-// PollHold, 204. A Sensor replies with POST /link/{location}/replies/{id}.
+// A Sensor's poll is GET /link/{location}/next, answered with the next Call
+// or, after PollHold, 204. A Sensor replies with POST
+// /link/{location}/replies/{id}.
+//
+// An Executor's poll is POST /link/{location}/executor/next carrying its
+// Action catalog, answered after PollHold with 204: nothing runs yet (#57).
+// The Location's token admits both roles until enrolment is specified.
 package link
 
 import (
@@ -14,10 +19,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/itsankoff/incident-copilot/internal/action"
 	"github.com/itsankoff/incident-copilot/internal/audit"
 	"github.com/itsankoff/incident-copilot/internal/evidence"
 )
@@ -40,6 +48,14 @@ type location struct {
 	lastPoll time.Time
 	calls    chan evidence.Call
 	pending  map[string]chan evidence.Answer
+	executor executorLink
+}
+
+// executorLink is a Location's Executor as its last poll left it.
+type executorLink struct {
+	online   bool
+	lastPoll time.Time
+	catalog  []action.Declaration
 }
 
 // Hub is the Control plane's end of every Sensor link. It keeps no state
@@ -87,21 +103,39 @@ func (h *Hub) Run(ctx context.Context) error {
 	}
 }
 
-// Sweep marks offline every Location whose last poll is OfflineAfter old.
+// Sweep marks offline every Sensor and Executor whose last poll is
+// OfflineAfter old.
 func (h *Hub) Sweep() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	now := h.now()
 	for name, l := range h.locations {
-		if !l.online || now.Sub(l.lastPoll) < OfflineAfter {
-			continue
+		if l.online && now.Sub(l.lastPoll) >= OfflineAfter {
+			if err := h.audit.Append(now, "location.offline", 0, map[string]string{"location": name}); err != nil {
+				return err
+			}
+			l.online = false
 		}
-		if err := h.audit.Append(now, "location.offline", 0, map[string]string{"location": name}); err != nil {
-			return err
+		if e := &l.executor; e.online && now.Sub(e.lastPoll) >= OfflineAfter {
+			if err := h.audit.Append(now, "executor.offline", 0, map[string]string{"location": name}); err != nil {
+				return err
+			}
+			e.online, e.catalog = false, nil
 		}
-		l.online = false
 	}
 	return nil
+}
+
+// Catalog returns the Actions location's Executor advertised on its last
+// poll. ok is false while that Executor is offline.
+func (h *Hub) Catalog(name string) ([]action.Declaration, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	l, ok := h.locations[name]
+	if !ok || !l.executor.online {
+		return nil, false
+	}
+	return slices.Clone(l.executor.catalog), true
 }
 
 // Online reports whether location's Sensor holds a live link.
@@ -151,7 +185,58 @@ func (h *Hub) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /link/{location}/next", h.next)
 	mux.HandleFunc("POST /link/{location}/replies/{id}", h.reply)
+	mux.HandleFunc("POST /link/{location}/executor/next", h.pollExecutor)
 	return mux
+}
+
+// executorPoll is the body of an Executor's poll.
+type executorPoll struct {
+	Actions []action.Declaration `json:"actions"`
+}
+
+func (h *Hub) pollExecutor(w http.ResponseWriter, r *http.Request) {
+	l, ok := h.authenticate(w, r)
+	if !ok {
+		return
+	}
+	var p executorPoll
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxReply)).Decode(&p); err != nil {
+		http.Error(w, "unparseable body", http.StatusBadRequest)
+		return
+	}
+	if err := h.executorPolled(r.PathValue("location"), l, p.Actions); err != nil {
+		http.Error(w, "audit", http.StatusInternalServerError)
+		return
+	}
+	hold := time.NewTimer(h.PollHold)
+	defer hold.Stop()
+	select {
+	case <-hold.C:
+	case <-h.stop:
+	case <-r.Context().Done():
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// executorPolled records an Executor's poll and the catalog it carried,
+// auditing the catalog whenever the Executor comes online or changes it.
+func (h *Hub) executorPolled(name string, l *location, actions []action.Declaration) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	now := h.now()
+	e := &l.executor
+	if !e.online || !reflect.DeepEqual(e.catalog, actions) {
+		names := make([]string, len(actions))
+		for i, a := range actions {
+			names[i] = a.Name
+		}
+		if err := h.audit.Append(now, "executor.online", 0, map[string]any{"location": name, "actions": names}); err != nil {
+			return err
+		}
+	}
+	e.online, e.lastPoll, e.catalog = true, now, actions
+	return nil
 }
 
 func (h *Hub) next(w http.ResponseWriter, r *http.Request) {

@@ -163,3 +163,34 @@ func TestLoadConfigLLM(t *testing.T) {
 		}
 	}
 }
+
+// A missing or unparseable policy is not a startup failure: it means a
+// ceiling of L1 everywhere (ADR 0003 D3), and Decide says why.
+func TestLoadConfigEnvironmentPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		value    string
+		ceilings map[string]Level
+		problem  string
+	}{
+		{"production:L1,staging:L2", map[string]Level{"production": L1, "staging": L2}, ""},
+		{"", nil, "is not configured (IC_ENVIRONMENT_CEILINGS)"},
+		{"production:L1,staging", nil, `is unparseable (IC_ENVIRONMENT_CEILINGS): entry "staging": want environment:level`},
+		{"production:L9", nil, `is unparseable (IC_ENVIRONMENT_CEILINGS): environment production: level "L9": want L0, L1, L2, or L3`},
+		{"production:L1,production:L2", nil, "is unparseable (IC_ENVIRONMENT_CEILINGS): environment production: named twice"},
+	} {
+		env := required()
+		env["IC_ENVIRONMENT_CEILINGS"] = tc.value
+		cfg, err := LoadConfig(envMap(env))
+		if err != nil {
+			t.Fatalf("%q: LoadConfig: %v", tc.value, err)
+		}
+		if cfg.Policy.Problem != tc.problem || len(cfg.Policy.Ceilings) != len(tc.ceilings) {
+			t.Errorf("%q: policy %+v, want ceilings %v, problem %q", tc.value, cfg.Policy, tc.ceilings, tc.problem)
+		}
+		for e, l := range tc.ceilings {
+			if cfg.Policy.Ceilings[e] != l {
+				t.Errorf("%q: %s ceiling %s, want %s", tc.value, e, cfg.Policy.Ceilings[e], l)
+			}
+		}
+	}
+}

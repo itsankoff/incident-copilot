@@ -1,5 +1,6 @@
 // Package kubernetes is the Kubernetes side of the platform seam: the Sensor's
-// evidence tools (ADR 0002 D6). Only main imports it.
+// evidence tools and the Executor's Actions (ADR 0002 D6). Only main imports
+// it.
 package kubernetes
 
 import (
@@ -7,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -62,7 +64,19 @@ type workload struct {
 	status any
 	// through lists the objects between the Target and its pods.
 	through []object
+	// revision and replicaSets are a Deployment's revisions, oldest first.
+	revision    string
+	replicaSets []replicaSet
 }
+
+type replicaSet struct {
+	Name     string   `json:"name"`
+	Revision string   `json:"revision"`
+	Replicas int32    `json:"replicas"`
+	Images   []string `json:"images"`
+}
+
+const revisionAnnotation = "deployment.kubernetes.io/revision"
 
 type object struct {
 	kind, name string
@@ -82,12 +96,24 @@ func read(ctx context.Context, c clientset.Interface, t signal.Target) (workload
 		if err != nil {
 			return workload{}, err
 		}
-		w := workload{uid: d.UID, spec: d.Spec, status: d.Status}
+		w := workload{uid: d.UID, spec: d.Spec, status: d.Status, revision: d.Annotations[revisionAnnotation]}
 		for i := range rs.Items {
-			if ownedBy(&rs.Items[i], d.UID) {
-				w.through = append(w.through, object{"ReplicaSet", rs.Items[i].Name, rs.Items[i].UID})
+			r := &rs.Items[i]
+			if !ownedBy(r, d.UID) {
+				continue
 			}
+			w.through = append(w.through, object{"ReplicaSet", r.Name, r.UID})
+			var images []string
+			for _, c := range r.Spec.Template.Spec.Containers {
+				images = append(images, c.Image)
+			}
+			w.replicaSets = append(w.replicaSets, replicaSet{r.Name, r.Annotations[revisionAnnotation], r.Status.Replicas, images})
 		}
+		slices.SortFunc(w.replicaSets, func(a, b replicaSet) int {
+			x, _ := strconv.Atoi(a.Revision)
+			y, _ := strconv.Atoi(b.Revision)
+			return x - y
+		})
 		return w, nil
 	case "StatefulSet":
 		s, err := c.AppsV1().StatefulSets(t.Namespace).Get(ctx, t.Name, get)
@@ -180,7 +206,11 @@ func workloadState(ctx context.Context, c clientset.Interface, q evidence.Query)
 			Conditions: p.Status.Conditions, Containers: p.Status.ContainerStatuses,
 		})
 	}
-	return map[string]any{"spec": w.spec, "status": w.status, "pods": states}, nil
+	out := map[string]any{"spec": w.spec, "status": w.status, "pods": states}
+	if w.revision != "" {
+		out["revision"], out["replicaSets"] = w.revision, w.replicaSets
+	}
+	return out, nil
 }
 
 type eventRecord struct {
