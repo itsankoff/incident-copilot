@@ -14,6 +14,7 @@ import (
 	"html/template"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/yuin/goldmark"
@@ -93,7 +94,8 @@ func (t *Tickets) Comment(ctx context.Context, ref, body string) error {
 func (t *Tickets) stamp() string { return t.now().UTC().Format(time.RFC3339) }
 
 // Handler serves the read-only ticket page: GET /tickets lists the tickets,
-// newest first, and GET /tickets/{ref} shows one with its comments.
+// newest first, GET /tickets/{ref} shows one with its comments, and
+// GET /tickets/{ref}.md is that ticket as stored, in markdown.
 func (t *Tickets) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /tickets", func(w http.ResponseWriter, r *http.Request) {
@@ -105,12 +107,21 @@ func (t *Tickets) Handler() http.Handler {
 		render(w, view{Title: "Tickets", List: list})
 	})
 	mux.HandleFunc("GET /tickets/{ref}", func(w http.ResponseWriter, r *http.Request) {
-		tk, err := t.ticket(r.Context(), r.PathValue("ref"))
+		ref, asMarkdown := strings.CutSuffix(r.PathValue("ref"), ".md")
+		tk, err := t.ticket(r.Context(), ref)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			http.NotFound(w, r)
 		case err != nil:
 			http.Error(w, "internal error", http.StatusInternalServerError)
+		case asMarkdown:
+			w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+			// Each part ends in one newline, so a rule never turns the line
+			// above it into a heading.
+			_, _ = fmt.Fprintf(w, "# %s (#%s)\n\nOpened %s\n\n%s\n", tk.Title, tk.Ref, tk.Created, strings.TrimRight(tk.Body, "\n"))
+			for _, c := range tk.Comments {
+				_, _ = fmt.Fprintf(w, "\n---\n\nComment %s\n\n%s\n", c.Created, strings.TrimRight(c.Body, "\n"))
+			}
 		default:
 			render(w, view{Title: "#" + tk.Ref + " " + tk.Title, Ticket: &tk})
 		}
@@ -118,18 +129,19 @@ func (t *Tickets) Handler() http.Handler {
 	return mux
 }
 
+// ticket and comment hold the text as stored, in markdown.
 type ticket struct {
 	Ref      string
 	Title    string
 	Created  string
-	Body     template.HTML
+	Body     string
 	Comments []comment
 	Count    int // comments, in the list
 }
 
 type comment struct {
 	Created string
-	Body    template.HTML
+	Body    string
 }
 
 func (t *Tickets) list(ctx context.Context) ([]ticket, error) {
@@ -152,12 +164,10 @@ func (t *Tickets) list(ctx context.Context) ([]ticket, error) {
 
 func (t *Tickets) ticket(ctx context.Context, ref string) (ticket, error) {
 	tk := ticket{Ref: ref}
-	var body string
 	if err := t.db.QueryRowContext(ctx, `SELECT title, body, created_at FROM tickets WHERE id = ?`, ref).
-		Scan(&tk.Title, &body, &tk.Created); err != nil {
+		Scan(&tk.Title, &tk.Body, &tk.Created); err != nil {
 		return ticket{}, err
 	}
-	tk.Body = markdown(body)
 	rows, err := t.db.QueryContext(ctx, `SELECT body, created_at FROM comments WHERE ticket_id = ? ORDER BY id`, ref)
 	if err != nil {
 		return ticket{}, err
@@ -165,10 +175,9 @@ func (t *Tickets) ticket(ctx context.Context, ref string) (ticket, error) {
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var c comment
-		if err := rows.Scan(&body, &c.Created); err != nil {
+		if err := rows.Scan(&c.Body, &c.Created); err != nil {
 			return ticket{}, err
 		}
-		c.Body = markdown(body)
 		tk.Comments = append(tk.Comments, c)
 	}
 	return tk, rows.Err()
@@ -196,7 +205,7 @@ func render(w http.ResponseWriter, v view) {
 	_ = page.Execute(w, v)
 }
 
-var page = template.Must(template.New("page").Parse(`<!doctype html>
+var page = template.Must(template.New("page").Funcs(template.FuncMap{"markdown": markdown}).Parse(`<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -219,9 +228,9 @@ code { background: #eff1f3; border-radius: 4px; padding: 0 .25rem; }
 {{- with .Ticket}}
 <p><a href="/tickets">All tickets</a></p>
 <h1>{{.Title}} <span style="color:#59636e">#{{.Ref}}</span></h1>
-<section class="box"><header>Opened {{.Created}}</header><div>{{.Body}}</div></section>
+<section class="box"><header>Opened {{.Created}}</header><div>{{markdown .Body}}</div></section>
 {{- range .Comments}}
-<section class="box"><header>Comment {{.Created}}</header><div>{{.Body}}</div></section>
+<section class="box"><header>Comment {{.Created}}</header><div>{{markdown .Body}}</div></section>
 {{- end}}
 {{- else}}
 <h1>Tickets</h1>
