@@ -41,7 +41,7 @@ In step 8, the timeline shows, in this order:
 - `fault rolled out to orders: "orders: pin order TTL in the manifest"`
 - `kubernetes` lines for the new `orders` pod: an `Error` exit, then `CrashLoopBackOff`, and its restarts
 - `alertmanager` lines: `DeploymentRolloutStuck` and `PodCrashLooping` firing for `demo/orders`
-- `control-plane` lines: the Signal received, `Triage opened Incident N`, `Ticket ... created (local ticketing)`, `Investigation started`, one `step` line per LLM request and Evidence query, `Investigation finished` with a confidence, `RCA written to ticket`, and `Ticket ... is ready for review`
+- `control-plane` lines: the Signal received, `Triage opened Incident N`, `Ticket ... created (local ticketing)`, `Investigation started`, one `step` line per LLM request and Evidence query, `Investigation finished` with a confidence, `RCA written to ticket`, `No Advice drafted: the Executor of Location ic-target is not linked`, `Advice written to ticket ... at autonomy level L1`, and `Ticket ... is ready for review`
 
 While waiting for the alert, the live line shows a progress bar against the scenario's `alert_within`. Then the `Result` section prints the ticket's URL and the RCA, starting with `## Root-cause analysis`.
 

@@ -94,3 +94,57 @@ func TestFollowRecordsTheInvestigationsEnd(t *testing.T) {
 		}
 	}
 }
+
+func TestFollowKeepsTheFirstTriageDecision(t *testing.T) {
+	f := &Follow{Target: "orders"}
+	observeAll(t, f,
+		`{"msg":"signal.received","incident":5,"target":"ic-target/demo/Deployment/orders"}`,
+		`{"msg":"triage.decision","incident":5,"decision":"open"}`,
+		`{"msg":"triage.decision","incident":5,"decision":"end"}`,
+	)
+	if f.Decision != "open" || f.Joined() {
+		t.Errorf("follow = %+v", *f)
+	}
+}
+
+func TestFollowCountsAReopenAsJoined(t *testing.T) {
+	f := &Follow{Target: "orders"}
+	observeAll(t, f,
+		`{"msg":"signal.received","incident":5,"target":"ic-target/demo/Deployment/orders"}`,
+		`{"msg":"triage.decision","incident":5,"decision":"reopen"}`,
+	)
+	if !f.Joined() {
+		t.Errorf("follow = %+v", *f)
+	}
+}
+
+func TestFollowRecordsWhyTheInvestigationStopped(t *testing.T) {
+	for _, c := range []struct{ line, want string }{
+		{`{"msg":"investigation.cancelled","incident":5,"reason":"incident 5 closed: idle","steps":2}`, "incident 5 closed: idle"},
+		{`{"msg":"investigation.failed","incident":5,"error":"comment on ticket 9: 502"}`, "comment on ticket 9: 502"},
+	} {
+		f := &Follow{Target: "orders"}
+		observeAll(t, f,
+			`{"msg":"signal.received","incident":5,"target":"ic-target/demo/Deployment/orders"}`,
+			`{"msg":"investigation.started","incident":5}`,
+			c.line,
+		)
+		if f.Stopped != c.want || f.Ready {
+			t.Errorf("%s: follow = %+v", c.line, *f)
+		}
+	}
+}
+
+func TestFollowRecordsTheRCAAndTheRemediation(t *testing.T) {
+	f := &Follow{Target: "orders"}
+	observeAll(t, f,
+		`{"msg":"signal.received","incident":5,"target":"ic-target/demo/Deployment/orders"}`,
+		`{"msg":"investigation.started","incident":5}`,
+		`{"msg":"investigation.finished","incident":5,"confidence":"low"}`,
+		`{"msg":"rca.posted","incident":5,"ref":"9"}`,
+		`{"msg":"remediation.started","incident":5,"model":"openrouter/free"}`,
+	)
+	if !f.Posted || !f.Advising || f.Ready {
+		t.Errorf("follow = %+v", *f)
+	}
+}

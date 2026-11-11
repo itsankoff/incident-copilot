@@ -66,6 +66,58 @@ func TestMilestoneRendersEachContractLine(t *testing.T) {
 			"Investigation ran out of its steps budget: confidence low after 8 steps in 4m58.1s",
 		},
 		{
+			`{"time":"2026-11-11T10:00:01Z","level":"INFO","msg":"triage.decision","incident":3,"decision":"reopen","reason":"a Signal for resolved Incident 3"}`,
+			"Triage reopened resolved Incident 3 (a Signal for resolved Incident 3)",
+		},
+		{
+			`{"time":"2026-11-11T10:09:01Z","level":"INFO","msg":"triage.decision","incident":3,"decision":"resolve"}`,
+			"Triage resolved Incident 3: its last Signal ended",
+		},
+		{
+			`{"time":"2026-11-11T10:09:01Z","level":"INFO","msg":"ticket.closed","incident":3,"adapter":"local","ref":"7"}`,
+			"Ticket 7 closed (local ticketing)",
+		},
+		{
+			`{"time":"2026-11-11T10:00:02Z","level":"INFO","msg":"investigation.skipped","incident":3,"reason":"the Incident has no Target"}`,
+			"Investigation skipped: the Incident has no Target",
+		},
+		{
+			`{"time":"2026-11-11T10:00:20Z","level":"INFO","msg":"investigation.cancelled","incident":3,"reason":"incident 3 closed: idle","steps":2}`,
+			"Investigation cancelled after 2 steps: incident 3 closed: idle",
+		},
+		{
+			`{"time":"2026-11-11T10:00:20Z","level":"ERROR","msg":"investigation.failed","incident":3,"error":"comment on ticket 7: 502"}`,
+			"Investigation failed: comment on ticket 7: 502",
+		},
+		{
+			`{"time":"2026-11-11T10:00:42Z","level":"INFO","msg":"remediation.started","incident":3,"model":"openrouter/free"}`,
+			"Remediation started with openrouter/free: drafting Advice from the RCA",
+		},
+		{
+			`{"time":"2026-11-11T10:00:45Z","level":"INFO","msg":"remediation.step","incident":3,"step":2,"tool":"submit_advice","ok":true}`,
+			"step 2: the LLM submitted its Advice",
+		},
+		{
+			`{"time":"2026-11-11T10:00:44Z","level":"INFO","msg":"remediation.step","incident":3,"step":1,"llm":"nvidia/nemotron-3.5-lightning:free","ok":true}`,
+			"step 1: LLM nvidia/nemotron-3.5-lightning:free answered",
+		},
+		{
+			`{"time":"2026-11-11T10:00:46Z","level":"INFO","msg":"remediation.finished","incident":3,"submitted":true,"steps":2}`,
+			"Remediation finished: Advice drafted after 2 steps",
+		},
+		{
+			`{"time":"2026-11-11T10:00:46Z","level":"INFO","msg":"remediation.finished","incident":3,"submitted":false,"steps":8}`,
+			"Remediation stopped after 8 steps without Advice",
+		},
+		{
+			`{"time":"2026-11-11T10:00:42Z","level":"INFO","msg":"remediation.skipped","incident":3,"reason":"no Executor is linked for Location ic-target"}`,
+			"No Advice drafted: no Executor is linked for Location ic-target",
+		},
+		{
+			`{"time":"2026-11-11T10:00:47Z","level":"INFO","msg":"advice.posted","incident":3,"ref":"7","level":"L1"}`,
+			"Advice written to ticket 7, at autonomy level L1",
+		},
+		{
 			`{"time":"2026-11-11T10:00:41Z","level":"INFO","msg":"rca.posted","incident":3,"ref":"7"}`,
 			"RCA written to ticket 7",
 		},

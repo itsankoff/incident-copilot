@@ -51,6 +51,8 @@ make cluster         # create ic-target and ic-control-plane (make kind-clusters
 make deploy          # build the demo-svc image and deploy orders, inventory, and loadgen into ic-target
 make control-plane   # build the incident-copilot image and deploy the Control plane into ic-control-plane
 make sensor          # build the incident-copilot image and deploy the Sensor into ic-target
+make executor        # deploy the Executor into ic-target, which advertises its Actions to the Control plane;
+                     # make demo does not, so the demo's Advice is skipped
 make status          # pods in both clusters
 make k9s             # browse ic-target in k9s (CLUSTER=cp for ic-control-plane)
 make port-forward    # ic-target's Prometheus :9090, Alertmanager :9093, Loki API :3100, Grafana :3000

@@ -392,14 +392,17 @@ func (r *runner) follow(ctx context.Context) (*demorun.Follow, error) {
 			return f, nil
 		case !r.hasKey && f.TicketRef != "":
 			return f, nil
-		case f.Decision == "join" && !f.Investigating:
+		case f.Stopped != "":
+			return f, nil
+		case f.Joined() && !f.Investigating:
 			if joinedAt.IsZero() {
 				joinedAt = time.Now()
 			} else if time.Since(joinedAt) > 90*time.Second {
 				return f, nil
 			}
-		case f.Finished:
-			// The ticket follows the investigation's end within seconds.
+		case f.Finished && !f.Posted:
+			// The RCA follows the investigation's end within seconds; the
+			// remediation loop after it has its own LLM budget.
 			if finishedAt.IsZero() {
 				finishedAt = time.Now()
 			} else if time.Since(finishedAt) > time.Minute {
@@ -414,8 +417,11 @@ func (r *runner) follow(ctx context.Context) (*demorun.Follow, error) {
 					continue
 				}
 				text = m.String()
-				if m.Msg == "investigation.step" {
+				if m.Msg == "investigation.step" || m.Msg == "remediation.step" {
 					text, step = "  "+text, m.Str("step")
+				}
+				if m.Msg == "remediation.started" {
+					step = ""
 				}
 			}
 			alerted = alerted || e.source == "alertmanager"
@@ -439,6 +445,12 @@ func (r *runner) follow(ctx context.Context) (*demorun.Follow, error) {
 				strings.Join(s.Expect.Alerts, " or "), demorun.Bar(elapsed, within, 20), demorun.Clock(elapsed), demorun.Clock(within)))
 		case f.Incident == 0:
 			ui.Status("waiting for a Signal to reach the Control plane " + demorun.Clock(elapsed))
+		case f.Advising && step != "":
+			ui.Status(fmt.Sprintf("drafting Advice with the LLM: step %s done %s", step, demorun.Clock(elapsed)))
+		case f.Advising:
+			ui.Status("drafting Advice with the LLM " + demorun.Clock(elapsed))
+		case f.Posted:
+			ui.Status("writing the RCA and the Advice to the ticket " + demorun.Clock(elapsed))
 		case f.Investigating && step != "":
 			ui.Status(fmt.Sprintf("investigating with the LLM: step %s done %s", step, demorun.Clock(elapsed)))
 		case f.Investigating:
@@ -552,12 +564,15 @@ func (r *runner) result(ctx context.Context, f *demorun.Follow) error {
 	case f.Ready && f.Exhausted:
 		ui.Warn(fmt.Sprintf("Incident %d: the investigation ran out of budget before it finished. Ticket %s says what it found.", f.Incident, f.TicketRef))
 	case f.Ready:
-		ui.OK(fmt.Sprintf("Incident %d: the RCA is in ticket %s, ready for review", f.Incident, f.TicketRef))
+		ui.OK(fmt.Sprintf("Incident %d: the RCA and the Advice are in ticket %s, ready for review", f.Incident, f.TicketRef))
+	case f.Stopped != "":
+		ui.Warn(fmt.Sprintf("Incident %d: the investigation stopped before ticket %s was ready: %s", f.Incident, f.TicketRef, f.Stopped))
+		ui.Note("The Control plane's log says more: kubectl --context " + cpCtx + " -n incident-copilot logs deploy/control-plane")
 	case f.Finished:
 		ui.Warn(fmt.Sprintf("Incident %d: the investigation ended, but ticket %s was not marked ready for review.", f.Incident, f.TicketRef))
 		ui.Note("The Control plane's log says why: kubectl --context " + cpCtx + " -n incident-copilot logs deploy/control-plane")
-	case f.Decision == "join":
-		ui.Warn(fmt.Sprintf("The fault joined Incident %d, which was already open, so it was not investigated again.", f.Incident))
+	case f.Joined():
+		ui.Warn(fmt.Sprintf("The fault joined Incident %d, which already existed, so it was not investigated again.", f.Incident))
 		ui.Note("Run make demo again and answer yes to a clean Control plane state, to see a new investigation.")
 	default:
 		ui.Warn(fmt.Sprintf("Incident %d has ticket %s, but no RCA: there is no OpenRouter key, so nothing investigated it.", f.Incident, f.TicketRef))
@@ -566,7 +581,7 @@ func (r *runner) result(ctx context.Context, f *demorun.Follow) error {
 	if url != "" {
 		ui.Plain("Ticket: " + url)
 	}
-	if !f.Ready && !f.Finished {
+	if !f.Ready && !f.Posted {
 		return nil
 	}
 	if rca := r.fetchRCA(ctx, f, url); rca != "" {

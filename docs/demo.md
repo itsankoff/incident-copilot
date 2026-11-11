@@ -82,7 +82,7 @@ After the fault, one stream shows what each source says, with minutes and second
 | `fault` | The broken rollout | The runner |
 | `kubernetes` | Each `orders` pod's state as it changes: `CrashLoopBackOff`, `OOMKilled`, `ImagePullBackOff`, unschedulable, restarts | The runner reads the pods, because Kubernetes does not log them readably |
 | `alertmanager` | Each demo alert that starts or stops firing | The runner reads Alertmanager's API, for the same reason |
-| `control-plane` | The Signal received, Triage opening or joining an Incident, the ticket, the investigation's start, each LLM and Evidence step, its end, the RCA written, and the ticket ready for review | The Control plane's own log |
+| `control-plane` | The Signal received, Triage opening or joining an Incident, the ticket, the investigation's start, each LLM and Evidence step, its end, the RCA written, the Advice drafted or skipped and written, and the ticket ready for review | The Control plane's own log |
 | `sensor` | The Sensor's link to the Control plane going up or down | The Sensor's own log |
 
 A crash-loop run looks like this, from a real run. The times, and the free models that answer, vary from run to run:
@@ -114,6 +114,15 @@ A crash-loop run looks like this, from a real run. The times, and the free model
   +3:10  control-plane RCA written to ticket 1
   +3:10  control-plane Ticket 1 is ready for review
 ```
+
+This run was recorded before L1 Advice ([#56](https://github.com/itsankoff/incident-copilot/issues/56)) merged. Now the Control plane also writes Advice to the ticket after the RCA, so two more lines come before `is ready for review`:
+
+```text
+  +3:10  control-plane No Advice drafted: the Executor of Location ic-target is not linked, so no Actions are offered
+  +3:10  control-plane Advice written to ticket 1, at autonomy level L1
+```
+
+`make demo` does not deploy the Executor, so no Actions are offered and the remediation loop is skipped. With one linked (`make executor`), `Remediation started` comes instead, with its own LLM and Evidence step lines, then `Remediation finished`.
 
 Then the runner prints the ticket's URL and the RCA, and offers to clean up.
 
