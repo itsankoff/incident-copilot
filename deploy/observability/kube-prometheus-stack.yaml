@@ -84,9 +84,11 @@ alertmanager:
   # its node's container name on kind's Docker network.
   config:
     route:
-      # Only the demo's alerts reach incident-copilot. The stack's own alerts
-      # (Watchdog, Prometheus*, Alertmanager*, KubeAPI*) name no workload, and
-      # each would open a ticket of its own.
+      # The demo's alerts and Kubernetes core alerts reach incident-copilot.
+      # The monitoring stack's own alerts (Watchdog, InfoInhibitor,
+      # Prometheus*, Alertmanager*, PrometheusOperator*, ConfigReloader*,
+      # KubeStateMetrics*) go to null: they report on the stack, not on the
+      # cluster.
       receiver: "null"
       group_by: ['...']
       group_wait: 10s
@@ -94,7 +96,14 @@ alertmanager:
       repeat_interval: 5m
       routes:
         - receiver: incident-copilot
-          matchers: ['namespace = "demo"']
+          matchers: ['namespace =~ "demo|kube-system"']
+        # Kubernetes core: API server, kubelet, nodes, node-exporter, etcd,
+        # resources and storage. Matched by name, because a cluster-scoped
+        # alert carries kube-state-metrics' namespace, "monitoring".
+        - receiver: incident-copilot
+          matchers:
+            - 'alertname =~ "Kube.*|Node.*|etcd.*"'
+            - 'alertname !~ "KubeStateMetrics.*"'
     receivers:
       - name: "null"
       - name: incident-copilot

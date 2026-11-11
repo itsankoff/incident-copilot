@@ -71,7 +71,7 @@ audit | jq -c '[.seq, .type, .incident, (.data.kind // .data.ref // "")]'
 icp logs deploy/control-plane | jq -c 'select(.msg == "ticket created") | {ref, title}'
 ```
 
-Within about 10 seconds (`group_wait`), the audit log shows `signal.received`, `triage.decision` (`open`), and `ticket.created` with the ref `log-1`. The log shows `ticket created` with the title `[warning] FakeTicketCheck on ic-target/demo/Deployment/inventory`. Other demo alerts can arrive too, if any are firing. `Watchdog` never does.
+Within about 10 seconds (`group_wait`), the audit log shows `signal.received`, `triage.decision` (`open`), and `ticket.created` with the ref `log-1`. The log shows `ticket created` with the title `[warning] FakeTicketCheck on ic-target/demo/Deployment/inventory`. Other demo alerts and Kubernetes core alerts can arrive too, if any are firing. `Watchdog` never does.
 
 Resolve the alert, so it stops repeating:
 

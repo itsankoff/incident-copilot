@@ -169,7 +169,8 @@ make control-plane
 ```sh
 am() { kubectl --context kind-ic-target -n monitoring exec alertmanager-kps-alertmanager-0 -c alertmanager -- "$@"; }
 am amtool config routes --alertmanager.url=http://localhost:9093
-# expect: "null" at the root, with an incident-copilot child for namespace="demo"
+# expect: "null" at the root, with two incident-copilot children: namespace=~"demo|kube-system",
+# and alertname=~"Kube.*|Node.*|etcd.*" with alertname!~"KubeStateMetrics.*"
 am amtool config show --alertmanager.url=http://localhost:9093 \
   | grep -E "'\.\.\.'|group_wait|group_interval|repeat_interval|send_resolved|max_alerts|credentials_file"
 # expect '...', group_wait 10s, group_interval 1m, repeat_interval 5m, send_resolved true,
@@ -197,7 +198,7 @@ sleep 20
 audit | jq -c '[.seq, .type, .incident, (.data.kind // .data.ref // "")]'
 ```
 
-Within about 10 seconds (`group_wait`), expect `signal.received`, `triage.decision` (`open`), and `ticket.created`. A new issue `[warning] ManualRouteCheck on ic-target/demo/Deployment/orders` appears in the tickets repository. The demo's other alerts can arrive too, if any are firing. `Watchdog` never does.
+Within about 10 seconds (`group_wait`), expect `signal.received`, `triage.decision` (`open`), and `ticket.created`. A new issue `[warning] ManualRouteCheck on ic-target/demo/Deployment/orders` appears in the tickets repository. The demo's other alerts and Kubernetes core alerts can arrive too, if any are firing. `Watchdog` never does.
 
 Resolve it. With `send_resolved: true`, Alertmanager sends the resolved notice after `group_interval` (1 minute):
 
@@ -210,6 +211,39 @@ audit | jq -c 'select(.type == "triage.decision") | [.seq, .data.kind, (.data.re
 ```
 
 If nothing arrives, check `am wget -qO- http://localhost:9093/metrics | grep notifications_failed_total`. If the count grows, Alertmanager cannot reach the Control plane at `ic-control-plane-control-plane:30080` or its token is wrong, and the Alertmanager log says which: `kubectl --context kind-ic-target -n monitoring logs alertmanager-kps-alertmanager-0 -c alertmanager | tail`.
+
+### 3. Kubernetes core alerts reach the Control plane; the stack's own do not
+
+Fire two series of `KubeNodeNotReady`, one `KubeAPIErrorBudgetBurn`, two series of `PrometheusMissingRuleEvaluations`, and a `Watchdog`, with the labels the real rules carry:
+
+```sh
+T0=$(date -u +%FT%TZ)
+add() { am amtool alert add "$@" --annotation=description=MANUAL-TEST-ANNOTATION --alertmanager.url=http://localhost:9093; }
+add KubeNodeNotReady severity=warning namespace=monitoring node=manual-a
+add KubeNodeNotReady severity=warning namespace=monitoring node=manual-b
+add KubeAPIErrorBudgetBurn severity=warning long=1h short=5m
+add PrometheusMissingRuleEvaluations severity=warning namespace=monitoring rule_group=manual-a
+add PrometheusMissingRuleEvaluations severity=warning namespace=monitoring rule_group=manual-b
+add Watchdog severity=none manual=yes
+am amtool alert query --receiver=incident-copilot --alertmanager.url=http://localhost:9093
+# expect KubeNodeNotReady (twice) and KubeAPIErrorBudgetBurn, and neither of the others
+sleep 20
+audit | jq -c --arg t "$T0" 'select(.time > $t) | [.seq, .type, .incident, (.data.name // .data.kind // .data.ref // .data.reason // "")]'
+```
+
+Expect `signal.received` only for the three core alerts. The first `KubeNodeNotReady` opens an Incident and a ticket `KubeNodeNotReady from ic-target-alertmanager (no Target)`; the second joins it, with a `ticket.commented`. `KubeAPIErrorBudgetBurn` opens an Incident and ticket of its own. Neither is investigated: each has `investigation.skipped`, "the Incident has no Target". Nothing arrives for `PrometheusMissingRuleEvaluations` or `Watchdog`.
+
+Resolve them:
+
+```sh
+END="--end=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+add KubeNodeNotReady severity=warning namespace=monitoring node=manual-a "$END"
+add KubeNodeNotReady severity=warning namespace=monitoring node=manual-b "$END"
+add KubeAPIErrorBudgetBurn severity=warning long=1h short=5m "$END"
+add PrometheusMissingRuleEvaluations severity=warning namespace=monitoring rule_group=manual-a "$END"
+add PrometheusMissingRuleEvaluations severity=warning namespace=monitoring rule_group=manual-b "$END"
+add Watchdog severity=none manual=yes "$END"
+```
 
 ## Clean up
 
