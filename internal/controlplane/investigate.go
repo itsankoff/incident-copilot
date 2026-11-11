@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -38,11 +39,12 @@ type Investigator struct {
 	evidence *Evidence
 	tickets  Ticketing
 	audit    *audit.Log
+	logger   *slog.Logger // milestones, with names and counts only
 	now      func() time.Time
 }
 
-func NewInvestigator(c llm.Client, model string, b Budget, ev *Evidence, tickets Ticketing, log *audit.Log, now func() time.Time) *Investigator {
-	return &Investigator{llm: c, model: model, budget: b, evidence: ev, tickets: tickets, audit: log, now: now}
+func NewInvestigator(c llm.Client, model string, b Budget, ev *Evidence, tickets Ticketing, log *audit.Log, logger *slog.Logger, now func() time.Time) *Investigator {
+	return &Investigator{llm: c, model: model, budget: b, evidence: ev, tickets: tickets, audit: log, logger: logger, now: now}
 }
 
 const submitTool = "submit_rca"
@@ -106,27 +108,36 @@ type ledgerEntry struct {
 
 // investigation is what the loop leaves behind.
 type investigation struct {
-	rca     *RCA // nil when no answer came before a budget or an error ended it
-	ledger  []ledgerEntry
-	stopped string
-	models  []string // the model that answered each request
-	steps   int
-	tokens  int
+	rca       *RCA // nil when no answer came before a budget or an error ended it
+	ledger    []ledgerEntry
+	stopped   string
+	exhausted string   // the budget that ran out: steps, tokens, or time
+	models    []string // the model that answered each request
+	steps     int
+	tokens    int
 }
 
 // Run investigates inc, runs Gate 1 on the answer, and comments the RCA on
 // inc's ticket. It returns only audit and ticketing failures.
 func (v *Investigator) Run(ctx context.Context, inc triage.Incident) error {
+	start := v.now()
 	if inc.Target == nil {
 		// The Evidence tools read a Target; with none there is nothing to read.
-		return v.audit.Append(v.now(), "investigation.skipped", inc.ID, map[string]string{"reason": "the Incident has no Target"})
+		const reason = "the Incident has no Target"
+		if err := v.audit.Append(start, "investigation.skipped", inc.ID, map[string]string{"reason": reason}); err != nil {
+			return err
+		}
+		v.logger.Info("investigation.skipped", "incident", inc.ID, "reason", reason)
+		return nil
 	}
-	if err := v.audit.Append(v.now(), "investigation.started", inc.ID, map[string]any{
+	if err := v.audit.Append(start, "investigation.started", inc.ID, map[string]any{
 		"model": v.model, "promptVersion": PromptVersion, "budget": v.budget,
 		"tools": toolNames(evidenceTools),
 	}); err != nil {
 		return err
 	}
+	v.logger.Info("investigation.started", "incident", inc.ID, "model", v.model,
+		slog.Group("budget", "steps", v.budget.Steps, "tokens", v.budget.Tokens, "time", v.budget.Time.String()))
 	inv, err := v.loop(ctx, inc)
 	if err != nil {
 		return err
@@ -145,10 +156,27 @@ func (v *Investigator) Run(ctx context.Context, inc triage.Incident) error {
 	}); err != nil {
 		return err
 	}
+	duration := v.now().Sub(start).Round(time.Millisecond).String()
+	if inv.exhausted != "" {
+		v.logger.Info("investigation.exhausted", "incident", inc.ID, "budget", inv.exhausted,
+			"confidence", confidence(inv, failures), "steps", inv.steps, "duration", duration)
+	} else {
+		v.logger.Info("investigation.finished", "incident", inc.ID,
+			"confidence", confidence(inv, failures), "steps", inv.steps, "duration", duration)
+	}
 	if err := v.tickets.Comment(ctx, inc.TicketRef, v.render(inv, failures)); err != nil {
 		return err
 	}
-	return v.audit.Append(v.now(), "ticket.commented", inc.ID, map[string]string{"ref": inc.TicketRef, "kind": "rca"})
+	if err := v.audit.Append(v.now(), "ticket.commented", inc.ID, map[string]string{"ref": inc.TicketRef, "kind": "rca"}); err != nil {
+		return err
+	}
+	v.logger.Info("rca.posted", "incident", inc.ID, "ref", inc.TicketRef)
+	ready := []any{"incident", inc.ID, "ref", inc.TicketRef}
+	if url := v.tickets.URL(inc.TicketRef); url != "" {
+		ready = append(ready, "url", url)
+	}
+	v.logger.Info("ticket.ready", ready...)
+	return nil
 }
 
 // loop talks to the model until it submits an RCA or a budget runs out. It
@@ -164,9 +192,11 @@ func (v *Investigator) loop(ctx context.Context, inc triage.Incident) (investiga
 		switch {
 		case inv.steps >= v.budget.Steps:
 			inv.stopped = fmt.Sprintf("step budget of %d ran out", v.budget.Steps)
+			inv.exhausted = "steps"
 			return inv, nil
 		case inv.tokens >= v.budget.Tokens:
 			inv.stopped = fmt.Sprintf("token budget of %d ran out", v.budget.Tokens)
+			inv.exhausted = "tokens"
 			return inv, nil
 		}
 		inv.steps++
@@ -181,9 +211,11 @@ func (v *Investigator) loop(ctx context.Context, inc triage.Incident) (investiga
 			if aerr := v.audit.Append(v.now(), "llm.error", inc.ID, map[string]any{"step": inv.steps, "error": err.Error()}); aerr != nil {
 				return inv, aerr
 			}
+			v.logger.Info("investigation.step", "incident", inc.ID, "step", inv.steps, "llm", v.model, "ok", false)
 			inv.stopped = "the LLM request failed: " + err.Error()
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				inv.stopped = fmt.Sprintf("time budget of %s ran out", v.budget.Time)
+				inv.exhausted = "time"
 			}
 			return inv, nil
 		}
@@ -192,6 +224,7 @@ func (v *Investigator) loop(ctx context.Context, inc triage.Incident) (investiga
 		}); err != nil {
 			return inv, err
 		}
+		v.logger.Info("investigation.step", "incident", inc.ID, "step", inv.steps, "llm", resp.Model, "ok", true)
 		inv.models = append(inv.models, resp.Model)
 		inv.tokens += resp.Usage.InputTokens + resp.Usage.OutputTokens
 		resp.Message.Role = llm.Assistant
@@ -216,23 +249,30 @@ func (v *Investigator) loop(ctx context.Context, inc triage.Incident) (investiga
 // toolResult runs one tool call and returns what the model reads back. It
 // returns an error only when the audit log cannot be written.
 func (v *Investigator) toolResult(ctx context.Context, inc triage.Incident, tc llm.ToolCall, inv *investigation) (string, error) {
+	logStep := func(tool string, ok bool) {
+		v.logger.Info("investigation.step", "incident", inc.ID, "step", inv.steps, "tool", tool, "ok", ok)
+	}
 	if tc.Name == submitTool {
 		var r RCA
 		if err := json.Unmarshal([]byte(tc.Arguments), &r); err != nil {
+			logStep(submitTool, false)
 			// The decoder's message names the field that did not match.
 			b, _ := json.Marshal(map[string]string{"error": "arguments do not match the submit_rca schema: " + err.Error()})
 			return string(b), nil
 		}
+		logStep(submitTool, true)
 		inv.rca = &r
 		return `{"ok":true}`, nil
 	}
 	if !slices.ContainsFunc(evidenceTools, func(t llm.ToolSpec) bool { return t.Name == tc.Name }) {
+		logStep("(not offered)", false) // the name is the model's text, so it stays out
 		return `{"error":"tool not offered"}`, nil
 	}
 	res, err := v.evidence.Query(ctx, inc.ID, evidence.Query{Tool: tc.Name, Target: *inc.Target})
 	if errors.Is(err, errAudit) {
 		return "", err
 	}
+	logStep(tc.Name, err == nil)
 	inv.ledger = append(inv.ledger, ledgerEntry{Ref: res.Ref, Tool: tc.Name, OK: err == nil})
 	if err != nil {
 		// The error text is unredacted Sensor output, so it stays out (#49).

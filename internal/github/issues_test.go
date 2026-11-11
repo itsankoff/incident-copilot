@@ -85,3 +85,12 @@ func equal(a, b request) bool {
 	}
 	return true
 }
+
+func TestIssueURLIsKnownOnlyForGitHubDotCom(t *testing.T) {
+	if got := New("https://api.github.com", "o/r", "tok", nil).URL("42"); got != "https://github.com/o/r/issues/42" {
+		t.Errorf("github.com URL = %q", got)
+	}
+	if got := New("https://ghe.example/api/v3", "o/r", "tok", nil).URL("42"); got != "" {
+		t.Errorf("GitHub Enterprise URL = %q, want none", got)
+	}
+}

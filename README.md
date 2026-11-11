@@ -120,7 +120,7 @@ flowchart LR
         CP[incident-copilot: Control plane + SQLite PVC]
     end
     AM -- "Bearer token<br/>ic-control-plane-control-plane:30080<br/>/webhook/alertmanager" --> CP
-    CP -- issues --> GH[GitHub Issues, or the fake adapter]
+    CP -- issues --> GH[GitHub Issues, or the local demo adapter]
 ```
 
 The full topology, with namespaces and networking, is in [`docs/design/demo-environment.md`](docs/design/demo-environment.md#topology). The service has injectable faults that cover the common categories of real incidents:
@@ -172,7 +172,7 @@ make eval                  # run the evaluation harness across all fault scenari
 
 `incident-copilot -role control-plane` reads its configuration from environment variables. It serves the Alertmanager webhook at `/webhook/alertmanager`, and Alertmanager must send `Authorization: Bearer <IC_ALERTMANAGER_TOKEN>`. It also serves the Sensor link at `/link/`. `incident-copilot -role sensor` dials out to it; `make sensor` deploys one into `ic-target`. The `executor` role is not implemented yet.
 
-For local runs, copy [`.env.demo.example`](.env.demo.example) to `.env.demo`, which is gitignored, and fill in the secrets. `make control-plane` turns `.env.demo` into the `incident-copilot-env` Secret in `ic-control-plane`. Without `IC_GITHUB_REPO` and `IC_GITHUB_TOKEN`, the Control plane starts with a fake ticketing adapter that only logs tickets, and it logs that it did.
+For local runs, copy [`.env.demo.example`](.env.demo.example) to `.env.demo`, which is gitignored, and fill in the secrets. `make control-plane` turns `.env.demo` into the `incident-copilot-env` Secret in `ic-control-plane`. Without `IC_GITHUB_REPO` and `IC_GITHUB_TOKEN`, the Control plane starts with the local ticketing adapter, which is for demo purposes only: it keeps tickets next to its state and shows them, read-only, at `/tickets` on its HTTP port, and it logs that it did.
 
 To check the whole path against a real GitHub repository, follow the manual test in [`docs/manual-tests/github-issues.md`](docs/manual-tests/github-issues.md).
 
@@ -195,7 +195,7 @@ The Control plane rejects a request body over 1 MiB with `413`. It cuts each lab
 | `IC_ALERTMANAGER_TOKEN` | required | Bearer token that Alertmanager sends. During rotation, two comma-separated tokens, both valid |
 | `IC_ALERTMANAGER_LOCATION` | required | Location (cluster name) of every Target resolved from its Alerts |
 | `IC_GITHUB_API_URL` | `https://api.github.com` | GitHub REST API base URL |
-| `IC_GITHUB_REPO` | unset | `owner/name` of the repository that gets one issue per Incident. Set it with `IC_GITHUB_TOKEN`, or leave both unset for the fake ticketing adapter |
+| `IC_GITHUB_REPO` | unset | `owner/name` of the repository that gets one issue per Incident. Set it with `IC_GITHUB_TOKEN`, or leave both unset for the local ticketing adapter, for demos only |
 | `IC_GITHUB_TOKEN` | unset | Token allowed to create issues and comments in `IC_GITHUB_REPO` |
 | `IC_LOCATIONS` | unset | Control plane: comma-separated `name:environment:token` entries, one per Location. A Sensor whose Location is not listed is refused |
 | `OPENROUTER_API_KEY` | unset | Control plane: OpenRouter API key for the RCA loop. Unset, Incidents get tickets but are not investigated |

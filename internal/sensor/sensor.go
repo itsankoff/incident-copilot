@@ -56,21 +56,29 @@ func New(l Link, tools []evidence.Tool, logger *slog.Logger) *Sensor {
 }
 
 // Run keeps the link up until ctx ends. Calls run concurrently, so a slow one
-// never stops the polls that keep the Location online.
+// never stops the polls that keep the Location online. It logs link.up on the
+// first poll that gets through after start or after a failure, and link.down
+// on every failed poll.
 func (s *Sensor) Run(ctx context.Context) {
 	var running sync.WaitGroup
 	defer running.Wait()
+	up := false
 	for ctx.Err() == nil {
 		call, ok, err := s.link.Next(ctx)
 		if err != nil {
+			up = false
 			if ctx.Err() == nil {
-				s.logger.Warn("link down: " + err.Error())
+				s.logger.Warn("link.down", "error", err.Error())
 			}
 			select {
 			case <-ctx.Done():
 			case <-time.After(s.Retry):
 			}
 			continue
+		}
+		if !up {
+			up = true
+			s.logger.Info("link.up")
 		}
 		if ok {
 			running.Go(func() { s.answer(ctx, call) })
